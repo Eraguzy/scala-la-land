@@ -1,4 +1,47 @@
+# SBT
 target/
-project/
+project/target/
+project/project/
+dist/
+
+# IDE
 .idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build
 .bsp/
+*.class
+*.jar
+*.war
+*.ear
+
+# Logs
+*.log
+
+# Gradle
+.gradle
+build/
+
+# Java
+*.keystore
+
+# Scala
+.scalafmt.conf
+.scalafix.conf
+.stubs/
+
+# Dependencies
+.classpath
+.project
+bin/
+
+# Node (if needed)
+node_modules/
+
+# Backup
+*.bak
+*.backup
