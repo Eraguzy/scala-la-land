@@ -51,8 +51,6 @@ scala-la-land/
 │   └── Demo.scala                     # Démonstration interactive
 ├── src/test/scala/bank/
 │   └── BlockchainSpec.scala           # Tests unitaires complets
-├── ARCHITECTURE.md                    # Détails architecturaux
-├── FORMAL_VERIFICATION.md             # Réseaux de Pétri & LTL
 └── README.md                          # Ce fichier
 ```
 
@@ -98,15 +96,6 @@ case class Block(
 - ✓ Bloc Genesis
 - ✓ Ajout de blocs
 - ✓ Suivi des soldes
-
----
-
-## 📐 Vérification formelle (Réseaux de Pétri + LTL)
-
-Voir [FORMAL_VERIFICATION.md](FORMAL_VERIFICATION.md) pour :
-- Places et transitions
-- Invariants (solde ≥ 0, IDs uniques, etc.)
-- Propriétés LTL (absence deadlock, vivacité)
 
 ---
 
