@@ -1,3 +1,15 @@
+error id: file:///H:/Documents/dev/scala-la-land/src/main/scala/bank/Actors.scala:
+file:///H:/Documents/dev/scala-la-land/src/main/scala/bank/Actors.scala
+empty definition using pc, found symbol in pc: 
+empty definition using semanticdb
+empty definition using fallback
+non-local guesses:
+	 -WalletCommand#
+	 -scala/Predef.WalletCommand#
+offset: 1212
+uri: file:///H:/Documents/dev/scala-la-land/src/main/scala/bank/Actors.scala
+text:
+```scala
 package bank
 
 import akka.actor.typed.{ActorRef, ActorSystem, Behavior}
@@ -39,7 +51,7 @@ object Crypto {
  * WalletActor : Crée et signe des transactions
  */
 object WalletActor {
-  def apply(publicKey: String, privateKey: String): Behavior[WalletCommand] =
+  def apply(publicKey: String, privateKey: String): Behavior[WalletComm@@and] =
     Behaviors.receive { (context, message) =>
       message match {
         case CreateTransaction(receiver, amount, fees, replyTo) =>
@@ -276,3 +288,10 @@ object DBBlockchain {
     hash.map("%02x".format(_)).mkString
   }
 }
+
+```
+
+
+#### Short summary: 
+
+empty definition using pc, found symbol in pc: 
