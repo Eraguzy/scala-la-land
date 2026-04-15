@@ -1,0 +1,57 @@
+Migration Akka - Impacts et changements
+Date: 2026-04-15
+
+Objectif
+- Migrer le moteur d'acteurs vers Akka en gardant le meme comportement metier.
+
+1) Changements de dependances
+- Ajout de la dependance Akka Actor dans build.sbt:
+  com.typesafe.akka %% akka-actor % 2.8.8
+
+2) Changements architecture acteurs
+- Avant:
+  - framework custom base sur LinkedBlockingQueue
+  - 1 thread daemon par acteur
+- Apres:
+  - execution des acteurs via Akka classic
+  - ActorSystem local unique: blockchain-system
+  - mailbox et scheduling geres par Akka
+
+3) Compatibilite API metier conservee
+- L'API locale ActorRef.ask(builder, timeout) est conservee.
+- Les messages conservent un replyTo de type Promise pour eviter de casser la couche metier.
+- Le code Wallet/Mempool/Ledger/Validator garde les memes signatures de messages.
+
+4) Cycle de vie runtime
+- Nouveau point important: fermeture explicite des acteurs du runtime.
+- Ajout de runtime.shutdown() dans:
+  - StateStore.withLockedRuntime (finally)
+  - ViewerMain (a chaque refresh)
+  - BootstrapMain (apres rendu)
+  - tests (finally)
+- But: eviter l'accumulation d'acteurs a chaque reconstruction de runtime.
+
+5) Impacts fonctionnels
+- Aucun changement fonctionnel cible:
+  - creation/validation des transactions identique
+  - minage identique
+  - persistance identique
+  - priorite mempool identique (score = amount * fees)
+- Les aliases de messages legacy restent disponibles.
+
+6) Impacts non-fonctionnels
+- Les logs peuvent afficher un warning Akka de type:
+  "Dev use only. Free keys at https://akka.io/key"
+  Cela n'empeche pas l'execution locale de la demo.
+
+7) Verification realisee
+- Tests unitaires passes: 3/3
+- Parcours CLI valide:
+  - BootstrapMain
+  - TransactionCliMain (cas valide)
+  - TransactionCliMain (solde insuffisant)
+  - ValidatorMinerMain (minage + append bloc)
+
+8) Points a surveiller si extension future
+- Si passage au distribue, il faudra migrer le mode de persistance fichier vers un service central ou DB.
+- Si besoin d'idiomatique Akka complete, remplacer progressivement les Promise dans les messages par ask pattern Akka natif.

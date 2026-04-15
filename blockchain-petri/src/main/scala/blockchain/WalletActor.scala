@@ -19,6 +19,7 @@ object WalletMessage {
   final case class IsValidator(replyTo: Promise[Boolean]) extends WalletMessage
 }
 
+// Porte l'etat d'un wallet et expose les operations de signature, debit et credit.
 final class WalletActor(initialState: WalletSnapshot) extends SimpleActor[WalletMessage](s"wallet-${initialState.address}") {
   import WalletMessage._
 
@@ -30,6 +31,7 @@ final class WalletActor(initialState: WalletSnapshot) extends SimpleActor[Wallet
     } else if (fees < 0) {
       Left("Les frais ne peuvent pas être négatifs.")
     } else {
+      // Le timestamp fait partie du payload signe: il doit etre fixe avant la signature.
       val tx = Transaction(
         from = state.address,
         to = to,
@@ -70,6 +72,7 @@ final class WalletActor(initialState: WalletSnapshot) extends SimpleActor[Wallet
       replyTo.success(state)
 
     case ApplyDebit(amount, replyTo) =>
+      // Derniere barriere defensive avant mutation du solde.
       if (state.balance < amount) {
         replyTo.success(Left(s"Solde insuffisant pour ${state.address}"))
       } else {

@@ -2,6 +2,8 @@ package blockchain
 
 import ValidatorMessage._
 
+// Point d'entrée CLI qui demande à un validateur de miner un bloc unique.
+// Les paramètres logEvery/delay servent uniquement à contrôler la verbosité de sortie.
 object ValidatorMinerMain {
   def main(args: Array[String]): Unit = {
     val validatorAddress = args.headOption.getOrElse("validator-1")

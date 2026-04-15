@@ -1,5 +1,6 @@
 package blockchain
 
+// Initialise (ou réinitialise) l'état de démo puis affiche un premier aperçu.
 object BootstrapMain {
   def main(args: Array[String]): Unit = {
     val snapshot = DemoData.initialSnapshot()
@@ -13,6 +14,10 @@ object BootstrapMain {
     println("  2) sbt \"runMain blockchain.TransactionCliMain alice bob 12\"")
     println("  3) sbt \"runMain blockchain.ValidatorMinerMain validator-1\"")
     println()
-    println(ConsoleRenderer.render(runtime, StateStore.defaultRuntimeDir))
+    try {
+      println(ConsoleRenderer.render(runtime, StateStore.defaultRuntimeDir))
+    } finally {
+      runtime.shutdown()
+    }
   }
 }

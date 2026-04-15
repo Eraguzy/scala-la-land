@@ -32,9 +32,9 @@ Acteurs du runtime:
 - ValidatorActor (un par validateur)
 
 Mécanique:
-- Chaque acteur possède sa mailbox LinkedBlockingQueue.
-- Chaque acteur tourne sur un thread daemon dédié.
-- Les appels se font via ActorRef.ask(builder, timeout), basé sur Promise.
+- Chaque acteur métier est exécuté par Akka (classic) dans un ActorSystem local.
+- Mailbox et ordonnancement sont gérés par Akka.
+- Les appels se font via ActorRef.ask(builder, timeout), avec réponse portée par Promise pour compatibilité du code métier.
 - Timeout ask par défaut: 5 secondes (sauf override explicite).
 
 
@@ -339,6 +339,7 @@ Tests (ActorFlowSpec):
 ====================================================
 
 Implémenté:
+- migration du framework d'acteurs maison vers Akka (classic)
 - fees / timestamp / publicKey
 - signature asymétrique RSA
 - RequestTopTransactions(2)

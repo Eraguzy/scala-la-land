@@ -22,6 +22,7 @@ object LedgerMessage {
 }
 
 object LedgerActor {
+  // Bloc genesis deterministe utilise quand la chaine est vide.
   def genesisBlock(): Block = {
     val genesis = Block(
       index = 0,
@@ -34,6 +35,7 @@ object LedgerActor {
   }
 }
 
+// Autorite finale: valide les blocs et fait muter l'etat de la chaine.
 final class LedgerActor(
     initialChain: Vector[Block],
     difficulty: Int,
@@ -55,6 +57,7 @@ final class LedgerActor(
 
     case AppendBlock(block, walletDirectory, mempool, replyTo) =>
       val result = validateBlock(block, walletDirectory, mempool).map { _ =>
+        // Les effets de commit ne sont appliques qu'apres validation complete.
         walletDirectory.ask(ApplyTransactions(block.transactions, _))
         mempool.ask(RemoveConfirmedTransactions(block.transactions.filterNot(_.from == Transaction.SystemAddress), _))
         chain = chain :+ block
@@ -70,6 +73,7 @@ final class LedgerActor(
       walletDirectory: ActorRef[WalletDirectoryMessage],
       mempool: ActorRef[MempoolMessage]
   ): Either[String, Unit] = {
+    // 1) Verifications structurelles du bloc.
     val prefix = "0" * difficulty
 
     if (block.index != chain.size) {
@@ -130,6 +134,7 @@ final class LedgerActor(
 
     val simulatedBalances = mutable.Map.empty[String, BigDecimal] ++ stateMap.view.mapValues(_.balance).toMap
 
+    // 2) Simulation debit/credit pour garantir qu'aucune tx ne depense au-dela du solde.
     normalTxs.foreach { tx =>
       val current = simulatedBalances.getOrElse(tx.from, BigDecimal(0))
       if (current < tx.totalDebit) {

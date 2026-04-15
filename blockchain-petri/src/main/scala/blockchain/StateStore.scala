@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.{AtomicMoveNotSupportedException, Files, NoSuchFileException, Path, Paths, StandardCopyOption, StandardOpenOption}
 import scala.util.Using
 
+// Persistance fichier avec verrou exclusif pour serialiser les commandes CLI.
 object StateStore {
   val defaultRuntimeDir: Path = Paths.get("runtime")
   private val stateFileName = "blockchain-state.txt"
@@ -40,9 +41,14 @@ object StateStore {
     withExclusiveLock(runtimeDir) {
       loadSnapshot(runtimeDir).map { snapshot =>
         val runtime = ActorRuntime.fromSnapshot(snapshot)
-        val result = f(runtime)
-        saveSnapshot(runtime.snapshot(), runtimeDir)
-        result
+        try {
+          // Flux standard: charger -> executer une action -> sauvegarder l'etat mis a jour.
+          val result = f(runtime)
+          saveSnapshot(runtime.snapshot(), runtimeDir)
+          result
+        } finally {
+          runtime.shutdown()
+        }
       }
     }
   }

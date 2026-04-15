@@ -3,6 +3,7 @@ package blockchain
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 
+// Codec texte des snapshots runtime: stable, lisible et retro-compatible.
 object SnapshotCodec {
   private val encoder = Base64.getUrlEncoder.withoutPadding()
   private val decoder = Base64.getUrlDecoder
@@ -16,6 +17,7 @@ object SnapshotCodec {
   def write(snapshot: BlockchainSnapshot): String = {
     val builder = new StringBuilder()
 
+    // Format ligne par ligne: META, W, M, B puis T rattachees au dernier bloc B.
     builder.append(s"META|${snapshot.difficulty}|${Transaction.formatAmount(snapshot.miningReward)}\n")
 
     snapshot.wallets.sortBy(_.address).foreach { wallet =>
@@ -56,6 +58,7 @@ object SnapshotCodec {
     var currentBlockTransactions = Vector.empty[Transaction]
 
     def flushCurrentBlock(): Unit = {
+      // Commit le bloc en tampon (avec ses transactions) au prochain B ou a la fin du fichier.
       currentBlockMeta.foreach { case (index, previousHash, validator, timestamp, nonce, hash) =>
         chainBuilder += Block(
           index = index,
@@ -81,7 +84,7 @@ object SnapshotCodec {
 
         case Some("W") =>
           if (parts.length == 6) {
-            // Legacy format without public key.
+            // Ancien format wallet sans cle publique.
             wallets :+= WalletSnapshot(
               address = decode(parts(1)),
               balance = BigDecimal(parts(2)),
@@ -105,7 +108,7 @@ object SnapshotCodec {
 
         case Some("M") =>
           if (parts.length == 5) {
-            // Legacy format without fees/timestamp/publicKey.
+            // Ancien format transaction sans fees/timestamp/publicKey.
             mempool :+= Transaction(
               from = decode(parts(1)),
               to = decode(parts(2)),

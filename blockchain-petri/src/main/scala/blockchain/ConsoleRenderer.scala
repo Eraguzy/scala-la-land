@@ -5,11 +5,13 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
+// Rend l'etat blockchain sous forme texte pour le viewer CLI.
 object ConsoleRenderer {
   private val formatter: DateTimeFormatter =
     DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault())
 
   def render(runtime: ActorRuntime, runtimeDir: Path): String = {
+    // Le rendu part d'un snapshot pris au debut pour eviter des lectures incoherentes.
     val snapshot = runtime.snapshot()
     val builder = new StringBuilder()
     val wallets = snapshot.wallets.sortBy(_.address)
@@ -55,6 +57,7 @@ object ConsoleRenderer {
     builder.append('\n')
 
     builder.append("---------------------- MEMPOOL ---------------------\n")
+    // Estimation du gain theorique du prochain bloc: reward + fees des 2 tx prioritaires.
     val topForNextBlock = snapshot.mempool.take(2)
     val topFees = topForNextBlock.map(_.fees).sum
     val potentialMinerGain = snapshot.miningReward + topFees
@@ -65,6 +68,7 @@ object ConsoleRenderer {
       builder.append("Mempool vide.\n")
     } else {
       snapshot.mempool.zipWithIndex.foreach { case (tx, idx) =>
+        // Le score affiche correspond a la regle de tri mempool (amount * fees).
         val score = tx.amount * tx.fees
         builder.append(
           s"[$idx] ${tx.from} -> ${tx.to} | amount=${formatAmount(tx.amount)} | fees=${formatAmount(tx.fees)} | score=${formatAmount(score)} | sig=${shorten(tx.signature, 16)}\n"
@@ -99,6 +103,7 @@ object ConsoleRenderer {
     Transaction.formatAmount(amount)
 
   private def shorten(value: String, size: Int): String = {
+    // Evite des signatures/hash trop longs dans l'affichage terminal.
     if (value.length <= size) value else value.take(size) + "..."
   }
 }

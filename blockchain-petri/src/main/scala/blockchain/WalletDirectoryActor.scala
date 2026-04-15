@@ -30,6 +30,7 @@ object WalletDirectoryMessage {
   final case class ApplyTransactions(transactions: Seq[Transaction], replyTo: Promise[Unit]) extends WalletDirectoryMessage
 }
 
+// Orchestrateur central: resolution des wallets, validations metier, application des soldes.
 final class WalletDirectoryActor(
     walletRefs: Map[String, ActorRef[WalletMessage]]
 ) extends SimpleActor[WalletDirectoryMessage]("wallet-directory") {
@@ -57,6 +58,7 @@ final class WalletDirectoryActor(
     } else if (tx.publicKey != senderOpt.get.publicKey) {
       Left("Clé publique incohérente pour l'émetteur.")
     } else {
+      // Verification de signature via la cle publique (ou mecanisme legacy sur ancien snapshot).
       val payload = if (tx.publicKey.nonEmpty) tx.payload else tx.legacyPayload
       val signatureValid = senderRefOpt.get.ask(WalletMessage.VerifySignature(payload, tx.signature, tx.publicKey, _))
       if (!signatureValid) {
@@ -99,6 +101,7 @@ final class WalletDirectoryActor(
         } else if (fees < 0) {
           Left("Les frais ne peuvent pas être négatifs.")
         } else {
+          // Le pending sortant inclut les tx deja en mempool pour eviter le double depense.
           val pending = mempool.ask(GetPendingOutgoing(from, _))
           val sender = senderOpt.get
           val available = sender.balance - pending
@@ -106,6 +109,7 @@ final class WalletDirectoryActor(
           if (available < (amount + fees)) {
             Left(s"Solde insuffisant : disponible=${Transaction.formatAmount(available)}")
           } else {
+            // AddPrevalidatedTransaction evite une boucle de ask bloquante entre acteurs.
             senderRefOpt.get.ask(WalletMessage.CreateSignedTransaction(to, amount, fees, _)).flatMap { tx =>
               validateTransactionInternal(tx, pending).flatMap { _ =>
                 mempool.ask(AddPrevalidatedTransaction(tx, _)).map(_ => tx)
@@ -144,6 +148,7 @@ final class WalletDirectoryActor(
       replyTo.success(validateTransactionInternal(tx, pendingOutgoing))
 
     case ApplyTransactions(transactions, replyTo) =>
+      // Application dans l'ordre du bloc pour conserver un replay deterministe.
       transactions.foreach {
         case tx if tx.from == Transaction.SystemAddress =>
           walletRefs.get(tx.to) match {

@@ -4,6 +4,7 @@ import scala.util.Try
 import WalletDirectoryMessage._
 import MempoolMessage._
 
+// Point d'entrée CLI pour soumettre une transaction à la mempool.
 object TransactionCliMain {
   def main(args: Array[String]): Unit = {
     if (args.length < 3 || args.length > 4) {
@@ -14,6 +15,8 @@ object TransactionCliMain {
     val from = args(0)
     val to = args(1)
     val amountOpt = Try(BigDecimal(args(2))).toOption
+    // Si l'utilisateur n'indique pas de frais, on applique une valeur par défaut
+    // afin de conserver un flux de démo simple.
     val feesOpt = args.lift(3).map(value => Try(BigDecimal(value)).toOption).getOrElse(Some(BigDecimal(0.1)))
 
     if (amountOpt.isEmpty) {

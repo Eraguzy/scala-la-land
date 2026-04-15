@@ -68,11 +68,14 @@ Acteurs principaux:
 - `LedgerActor`: autorité de validation des blocs et mise à jour de l'état final.
 - `ValidatorActor` (1 par validateur): construction/minage d'un bloc candidat.
 
-Le framework d'acteurs est maison:
+Architecture d'exécution des acteurs:
 
-- Une mailbox (`LinkedBlockingQueue`) par acteur.
-- Un thread daemon par acteur.
-- `ActorRef.ask` envoie un message et attend la réponse (`Await.result`, timeout par défaut 5 s).
+Le runtime d'acteurs repose sur **Akka (classic)**, avec une couche de compatibilité locale:
+
+- chaque acteur métier (`WalletActor`, `MempoolActor`, etc.) est exécuté par un acteur Akka
+- mailbox, ordonnancement et exécution sont gérés par Akka
+- l'API locale `ActorRef.ask(builder, timeout)` est conservée pour le code métier
+- les requêtes/réponses restent exprimées via `Promise` dans les messages pour limiter les changements de surface
 
 ## Modèle de données
 
@@ -157,6 +160,40 @@ Si valide:
 - suppression des transactions confirmées de la mempool (`RemoveConfirmedTransactions`)
 - append du bloc à la chaîne
 
+## Réseau de Pétri (vue projet)
+
+Le schéma ci-dessous propose une vue "réseau de Pétri" simplifiée du flux principal transaction -> minage -> commit.
+
+- cercles: places (états)
+- rectangles: transitions (traitements)
+
+```mermaid
+flowchart LR
+	P0((P0: Demande transaction))
+	T1[T1: SubmitTransactionFromWallet]
+	P1((P1: Transaction signée))
+	T2[T2: Validation annuaire + solde + signature]
+	P2((P2: Mempool priorisée))
+	T3[T3: Selection top 2 amount*fees]
+	P3((P3: Bloc candidat + reward))
+	T4[T4: Preuve de travail]
+	P4((P4: Bloc miné))
+	T5[T5: Validation ledger + application soldes]
+	P5((P5: Chaîne mise à jour))
+	T6[T6: Persistance snapshot]
+	P6((P6: Etat runtime sauvegardé))
+
+	P0 --> T1 --> P1 --> T2 --> P2 --> T3 --> P3 --> T4 --> P4 --> T5 --> P5 --> T6 --> P6
+```
+
+Correspondance rapide avec les composants:
+
+- `T1`/`T2`: `WalletDirectoryActor` + `WalletActor`
+- `P2`/`T3`: `MempoolActor`
+- `T4`: `ValidatorActor` (`block.mine`)
+- `T5`: `LedgerActor` (+ `ApplyTransactions` / `RemoveConfirmedTransactions`)
+- `T6`: `StateStore.withLockedRuntime`
+
 ## Persistance de l'état
 
 Le state est stocké dans:
@@ -232,7 +269,7 @@ Les champs texte sont encodés en Base64 URL-safe. Le codec lit aussi les ancien
 
 - Pas de réseau P2P réel, ni consensus distribué entre nœuds.
 - Pas de persistance en base de données (fichier texte local).
-- Pas de pool de threads: 1 thread daemon par acteur.
+- Pas d'Akka cluster/remoting: utilisation locale d'un `ActorSystem` unique.
 - Le champ `secret` d'un wallet contient la clé privée encodée Base64.
 
 ## Conseils de démo

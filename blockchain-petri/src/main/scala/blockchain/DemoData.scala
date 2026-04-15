@@ -1,5 +1,6 @@
 package blockchain
 
+// Genere un scenario de demo initial utilise par BootstrapMain et les tests.
 object DemoData {
   def initialSnapshot(): BlockchainSnapshot = {
     val alice = wallet("alice", 120, isValidator = false)
@@ -35,6 +36,7 @@ object DemoData {
   }
 
   private def wallet(address: String, initialBalance: BigDecimal, isValidator: Boolean): WalletSnapshot = {
+    // Chaque wallet recoit sa propre paire de cles RSA.
     val (publicKey, privateKey) = CryptoUtils.generateKeyPair()
     WalletSnapshot(address, initialBalance, initialBalance, privateKey, publicKey, isValidator)
   }
@@ -50,6 +52,7 @@ object DemoData {
     val sender = wallets.find(_.address == from).getOrElse(
       throw new IllegalArgumentException(s"Wallet introuvable : $from")
     )
+    // Un petit seed de timestamp permet d'avoir un ordre initial stable dans la mempool.
     val timestamp = System.currentTimeMillis() + timestampSeed
     val unsigned = Transaction(from, to, amount, fees, timestamp, sender.publicKey, signature = "")
     val signature = CryptoUtils.sign(unsigned.payload, sender.secret)

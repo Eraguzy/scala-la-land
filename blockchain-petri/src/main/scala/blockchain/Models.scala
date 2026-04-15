@@ -1,5 +1,6 @@
 package blockchain
 
+// Etat persiste d'un wallet, consomme par les acteurs et le codec snapshot.
 final case class WalletSnapshot(
     address: String,
     balance: BigDecimal,
@@ -18,11 +19,14 @@ final case class Transaction(
     publicKey: String,
     signature: String
 ) {
+  // Payload signe dans le schema courant (inclut fees et timestamp).
   def payload: String =
     s"$from|$to|${Transaction.formatAmount(amount)}|${Transaction.formatAmount(fees)}|$timestamp"
 
+  // Payload historique conserve pour compatibilite ascendante.
   def legacyPayload: String = s"$from|$to|${Transaction.formatAmount(amount)}"
 
+  // Cout total preleve cote emetteur: montant + frais.
   def totalDebit: BigDecimal = amount + fees
 
   override def toString: String =
@@ -34,6 +38,7 @@ object Transaction {
   val SystemSignature: String = "SYSTEM"
   val SystemPublicKey: String = "SYSTEM"
 
+  // Transaction synthetique emise par le protocole lors du minage.
   def reward(to: String, amount: BigDecimal): Transaction =
     Transaction(SystemAddress, to, amount, BigDecimal(0), System.currentTimeMillis(), SystemPublicKey, SystemSignature)
 
@@ -50,6 +55,7 @@ final case class Block(
     var nonce: Long = 0L,
     var hash: String = ""
 ) {
+  // Le hash de bloc engage a la fois l'entete et le contenu complet des transactions.
   def computeHash: String = {
     val txData = transactions
       .map { tx =>
@@ -61,6 +67,7 @@ final case class Block(
     CryptoUtils.sha256(raw)
   }
 
+  // Boucle PoW volontairement simple pour un contexte pedagogique.
   def mine(difficulty: Int, onAttempt: (Long, String) => Unit = (_, _) => ()): Unit = {
     val prefix = "0" * difficulty
     hash = computeHash

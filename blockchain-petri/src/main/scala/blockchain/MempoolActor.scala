@@ -28,10 +28,12 @@ object MempoolMessage {
   final case class RemoveTransactions(transactions: Seq[Transaction], replyTo: Promise[Unit]) extends MempoolMessage
 }
 
+// Stocke les transactions en attente et fournit une selection priorisee aux validateurs.
 final class MempoolActor(initialTransactions: Vector[Transaction]) extends SimpleActor[MempoolMessage]("mempool") {
   import MempoolMessage._
   import WalletDirectoryMessage._
 
+  // Regle de priorite demandee: score amount*fees, le plus grand en premier.
   private def priorityScore(tx: Transaction): BigDecimal = tx.amount * tx.fees
 
   private var transactions: Vector[Transaction] = sortTransactions(initialTransactions)
@@ -40,6 +42,7 @@ final class MempoolActor(initialTransactions: Vector[Transaction]) extends Simpl
     values.sortWith { (left, right) =>
       val leftScore = priorityScore(left)
       val rightScore = priorityScore(right)
+      // Egalite de score: on prend d'abord le timestamp le plus ancien.
       if (leftScore == rightScore) left.timestamp < right.timestamp
       else leftScore > rightScore
     }
@@ -93,6 +96,7 @@ final class MempoolActor(initialTransactions: Vector[Transaction]) extends Simpl
       replyTo.success(result)
 
     case TryAddTransaction(tx, walletDirectory, replyTo) =>
+      // Alias de compatibilite conserve pour les anciens appels.
       this.receive(SubmitTransaction(tx, walletDirectory, replyTo))
 
     case RemoveConfirmedTransactions(toRemove, replyTo) =>
@@ -100,6 +104,7 @@ final class MempoolActor(initialTransactions: Vector[Transaction]) extends Simpl
       replyTo.success(())
 
     case DeleteDoneTransactions(toRemove, replyTo) =>
+      // Alias de compatibilite conserve pour alignement schema.
       removeInternal(toRemove)
       replyTo.success(())
 

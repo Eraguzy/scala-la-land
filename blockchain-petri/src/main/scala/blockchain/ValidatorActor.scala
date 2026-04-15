@@ -12,6 +12,8 @@ object ValidatorMessage {
   ) extends ValidatorMessage
 }
 
+// Mine un bloc candidat a partir des meilleures transactions mempool,
+// puis demande au ledger de le commit si valide.
 final class ValidatorActor(
     address: String,
     walletDirectory: ActorRef[WalletDirectoryMessage],
@@ -28,6 +30,7 @@ final class ValidatorActor(
       if (!walletDirectory.ask(IsValidator(address, _))) {
         replyTo.success(Left(s"$address n'est pas un validateur autorisé."))
       } else {
+        // Un bloc prend au plus 2 transactions prioritaires + la reward.
         val pendingTransactions = mempool.ask(RequestTopTransactions(2, _))
         if (pendingTransactions.isEmpty) {
           replyTo.success(Left("Mempool vide : rien à miner."))
@@ -53,6 +56,7 @@ final class ValidatorActor(
           println()
           println("Début du minage :")
 
+          // La boucle de preuve de travail est deleguee a Block.mine.
           block.mine(
             ledgerSnapshot.difficulty,
             onAttempt = { (nonce, hash) =>
@@ -70,6 +74,7 @@ final class ValidatorActor(
           println(s"Nonce gagnant      : ${block.nonce}")
           println("Tentative d'ajout au ledger...")
 
+          // Le ledger reste l'autorite finale d'acceptation du bloc.
           val commitResult = ledger.ask(
             AppendBlock(block, walletDirectory, mempool, _),
             timeout = 30.minutes
