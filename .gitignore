@@ -1,3 +1,5 @@
 .bsp/
 .idea/
+.metals/
+.vscode/
 target/
