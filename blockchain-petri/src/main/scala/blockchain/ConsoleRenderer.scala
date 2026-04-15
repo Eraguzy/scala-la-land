@@ -32,7 +32,7 @@ object ConsoleRenderer {
       builder.append("Aucun validateur enregistré.\n")
     } else {
       validators.foreach { wallet =>
-        val pending = snapshot.mempool.filter(_.from == wallet.address).map(_.amount).sum
+        val pending = snapshot.mempool.filter(_.from == wallet.address).map(_.totalDebit).sum
         builder.append(
           f"- ${wallet.address}%-14s | balance=${formatAmount(wallet.balance)}%-8s | pending=${formatAmount(pending)}%s\n"
         )
@@ -45,7 +45,7 @@ object ConsoleRenderer {
       builder.append("Aucun wallet utilisateur.\n")
     } else {
       normalWallets.foreach { wallet =>
-        val pending = snapshot.mempool.filter(_.from == wallet.address).map(_.amount).sum
+        val pending = snapshot.mempool.filter(_.from == wallet.address).map(_.totalDebit).sum
         val available = wallet.balance - pending
         builder.append(
           f"- ${wallet.address}%-14s | balance=${formatAmount(wallet.balance)}%-8s | pending=${formatAmount(pending)}%-8s | available=${formatAmount(available)}%s\n"
@@ -55,12 +55,19 @@ object ConsoleRenderer {
     builder.append('\n')
 
     builder.append("---------------------- MEMPOOL ---------------------\n")
+    val topForNextBlock = snapshot.mempool.take(2)
+    val topFees = topForNextBlock.map(_.fees).sum
+    val potentialMinerGain = snapshot.miningReward + topFees
+    builder.append(
+      s"Reward bloc=${formatAmount(snapshot.miningReward)} | Gain mineur estimé (reward + fees top2)=${formatAmount(potentialMinerGain)}\n"
+    )
     if (snapshot.mempool.isEmpty) {
       builder.append("Mempool vide.\n")
     } else {
       snapshot.mempool.zipWithIndex.foreach { case (tx, idx) =>
+        val score = tx.amount * tx.fees
         builder.append(
-          s"[$idx] ${tx.from} -> ${tx.to} | amount=${formatAmount(tx.amount)} | sig=${shorten(tx.signature, 16)}\n"
+          s"[$idx] ${tx.from} -> ${tx.to} | amount=${formatAmount(tx.amount)} | fees=${formatAmount(tx.fees)} | score=${formatAmount(score)} | sig=${shorten(tx.signature, 16)}\n"
         )
       }
     }
@@ -75,7 +82,7 @@ object ConsoleRenderer {
       block.transactions.foreach { tx =>
         val kind = if (tx.from == Transaction.SystemAddress) "reward" else "tx"
         builder.append(
-          s"    - [$kind] ${tx.from} -> ${tx.to} | amount=${formatAmount(tx.amount)}\n"
+          s"    - [$kind] ${tx.from} -> ${tx.to} | amount=${formatAmount(tx.amount)} | fees=${formatAmount(tx.fees)}\n"
         )
       }
     }

@@ -6,26 +6,27 @@ import MempoolMessage._
 
 object TransactionCliMain {
   def main(args: Array[String]): Unit = {
-    if (args.length != 3) {
-      println("Usage : sbt \"runMain blockchain.TransactionCliMain <from> <to> <amount>\"")
+    if (args.length < 3 || args.length > 4) {
+      println("Usage : sbt \"runMain blockchain.TransactionCliMain <from> <to> <amount> [fees]\"")
       return
     }
 
     val from = args(0)
     val to = args(1)
     val amountOpt = Try(BigDecimal(args(2))).toOption
+    val feesOpt = args.lift(3).map(value => Try(BigDecimal(value)).toOption).getOrElse(Some(BigDecimal(0.1)))
 
     if (amountOpt.isEmpty) {
       println(s"Montant invalide : ${args(2)}")
       return
     }
+    if (feesOpt.isEmpty) {
+      println(s"Frais invalides : ${args(3)}")
+      return
+    }
 
     val result = StateStore.withLockedRuntime() { runtime =>
-      val pending = runtime.mempool.ask(GetPendingOutgoing(from, _))
-      runtime.walletDirectory.ask(CreateTransaction(from, to, amountOpt.get, pending, _)) match {
-        case Left(error) => Left(error)
-        case Right(tx)   => runtime.mempool.ask(TryAddTransaction(tx, runtime.walletDirectory, _)).map(_ => tx)
-      }
+      runtime.walletDirectory.ask(SubmitTransactionFromWallet(from, to, amountOpt.get, feesOpt.get, runtime.mempool, _))
     }
 
     result match {
@@ -35,7 +36,9 @@ object TransactionCliMain {
         println(error)
       case Some(Right(tx)) =>
         println("Transaction ajoutée à la mempool :")
-        println(s"${tx.from} -> ${tx.to} | amount=${Transaction.formatAmount(tx.amount)} | signature=${tx.signature}")
+        println(
+          s"${tx.from} -> ${tx.to} | amount=${Transaction.formatAmount(tx.amount)} | fees=${Transaction.formatAmount(tx.fees)} | ts=${tx.timestamp} | signature=${tx.signature}"
+        )
     }
   }
 }

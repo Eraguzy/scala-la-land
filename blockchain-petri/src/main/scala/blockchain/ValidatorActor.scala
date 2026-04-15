@@ -28,7 +28,7 @@ final class ValidatorActor(
       if (!walletDirectory.ask(IsValidator(address, _))) {
         replyTo.success(Left(s"$address n'est pas un validateur autorisé."))
       } else {
-        val pendingTransactions = mempool.ask(GetTransactions)
+        val pendingTransactions = mempool.ask(RequestTopTransactions(2, _))
         if (pendingTransactions.isEmpty) {
           replyTo.success(Left("Mempool vide : rien à miner."))
         } else {
@@ -47,7 +47,7 @@ final class ValidatorActor(
           println(s"Validateur      : $address")
           println(s"Bloc candidat   : #${block.index}")
           println(s"Previous hash   : ${block.previousHash}")
-          println(s"Transactions    : ${pendingTransactions.size} + reward")
+          println(s"Transactions    : ${pendingTransactions.size} (top score amount*fees) + reward")
           println(s"Difficulté      : ${ledgerSnapshot.difficulty}")
           println(s"Préfixe attendu : $prefix")
           println()
@@ -71,7 +71,7 @@ final class ValidatorActor(
           println("Tentative d'ajout au ledger...")
 
           val commitResult = ledger.ask(
-            TryAppendBlock(block, walletDirectory, mempool, _),
+            AppendBlock(block, walletDirectory, mempool, _),
             timeout = 30.minutes
           )
 

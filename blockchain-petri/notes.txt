@@ -1,0 +1,352 @@
+Blockchain Scala Land - Notes techniques complètes
+
+Date de mise à jour: 2026-04-15
+
+====================================================
+1) Résumé exécutif
+====================================================
+
+Le projet implémente une blockchain centralisée, orchestrée par acteurs.
+
+Points clés désormais en place:
+- Transactions enrichies: amount, fees, timestamp, publicKey, signature.
+- Signatures asymétriques RSA (SHA256withRSA).
+- Mempool priorisée par score amount*fees (desc), puis timestamp (asc).
+- Minage sur top 2 transactions + reward SYSTEM.
+- Validation forte au ledger avant commit.
+- Persistance texte dans runtime/blockchain-state.txt avec lock fichier.
+- Compatibilité ascendante du codec pour anciens snapshots.
+
+Le système reste volontairement local/mono-processus: ce n'est pas un réseau P2P.
+
+
+====================================================
+2) Architecture d'acteurs
+====================================================
+
+Acteurs du runtime:
+- WalletActor (un par wallet)
+- WalletDirectoryActor (annuaire et validations métier)
+- MempoolActor (pending tx triées)
+- LedgerActor (chaîne + validation bloc)
+- ValidatorActor (un par validateur)
+
+Mécanique:
+- Chaque acteur possède sa mailbox LinkedBlockingQueue.
+- Chaque acteur tourne sur un thread daemon dédié.
+- Les appels se font via ActorRef.ask(builder, timeout), basé sur Promise.
+- Timeout ask par défaut: 5 secondes (sauf override explicite).
+
+
+====================================================
+3) Modèle de données
+====================================================
+
+3.1 WalletSnapshot
+- address: String
+- balance: BigDecimal
+- initialBalance: BigDecimal
+- secret: String (clé privée RSA encodée Base64)
+- publicKey: String (clé publique RSA encodée Base64)
+- isValidator: Boolean
+
+3.2 Transaction
+- from: String
+- to: String
+- amount: BigDecimal
+- fees: BigDecimal
+- timestamp: Long
+- publicKey: String
+- signature: String
+
+Helpers:
+- payload = from|to|amount|fees|timestamp
+- legacyPayload = from|to|amount
+- totalDebit = amount + fees
+
+Convention reward:
+- from = SYSTEM
+- signature = SYSTEM
+- publicKey = SYSTEM
+- fees = 0
+
+3.3 Block
+- index, previousHash, transactions, validator, timestamp, nonce, hash
+- computeHash intègre les champs tx (amount/fees/timestamp/publicKey/signature)
+- mine(difficulty) cherche un hash avec préfixe "0" * difficulty
+
+
+====================================================
+4) Contrats de messages
+====================================================
+
+4.1 WalletMessage
+- GetSnapshot(replyTo)
+- SignPayload(payload, replyTo)
+- VerifySignature(payload, signature, publicKey, replyTo)
+- CreateSignedTransaction(to, amount, fees, replyTo)
+- ApplyCredit(amount, replyTo)
+- ApplyDebit(amount, replyTo)
+- IsValidator(replyTo)
+
+4.2 WalletDirectoryMessage
+- GetWallet(address, replyTo)
+- GetAllWallets(replyTo)
+- IsValidator(address, replyTo)
+- SubmitTransactionFromWallet(from, to, amount, fees, mempool, replyTo)
+- CreateTransaction(from, to, amount, pendingOutgoing, replyTo) [compat]
+- ValidateTransaction(tx, pendingOutgoing, replyTo)
+- ApplyTransactions(transactions, replyTo)
+
+4.3 MempoolMessage
+- GetTransactions(replyTo)
+- RequestTransaction(replyTo) [alias schema]
+- RequestTopTransactions(limit, replyTo)
+- GetPendingOutgoing(address, replyTo)
+- ContainsAll(transactions, replyTo)
+- SubmitTransaction(tx, walletDirectory, replyTo)
+- AddPrevalidatedTransaction(tx, replyTo)
+- TryAddTransaction(tx, walletDirectory, replyTo) [compat]
+- DeleteDoneTransactions(transactions, replyTo) [alias schema]
+- RemoveConfirmedTransactions(transactions, replyTo)
+- RemoveTransactions(transactions, replyTo) [compat]
+
+4.4 LedgerMessage
+- GetSnapshot(replyTo)
+- GetLastBlock(replyTo)
+- AppendBlock(block, walletDirectory, mempool, replyTo)
+- TryAppendBlock(block, walletDirectory, mempool, replyTo) [compat]
+
+4.5 ValidatorMessage
+- MineOnce(logEvery, attemptDelayMs, replyTo)
+
+
+====================================================
+5) Flux transaction (CLI -> mempool)
+====================================================
+
+Entrée utilisateur:
+- TransactionCliMain <from> <to> <amount> [fees]
+- fees par défaut = 0.1
+
+Chemin runtime:
+1. TransactionCliMain ouvre l'état via StateStore.withLockedRuntime.
+2. Appel WalletDirectoryActor.SubmitTransactionFromWallet(...).
+3. WalletDirectory vérifie:
+   - sender existe
+   - receiver existe
+   - amount > 0
+   - fees >= 0
+4. WalletDirectory lit pending via Mempool.GetPendingOutgoing(from).
+5. Vérification solde disponible:
+   available = sender.balance - pending
+   condition: available >= amount + fees
+6. Demande au WalletActor source de créer/signature:
+   CreateSignedTransaction(to, amount, fees)
+7. Revalidation interne (signature, clé publique, solde, cohérence).
+8. Insertion dans mempool via AddPrevalidatedTransaction.
+9. Sauvegarde snapshot et réponse CLI.
+
+Pourquoi AddPrevalidatedTransaction:
+- Évite un cycle d'ask bloquant WalletDirectory -> Mempool -> WalletDirectory.
+- Supprime le risque de deadlock tout en conservant les validations.
+
+
+====================================================
+6) Flux minage (validator -> ledger)
+====================================================
+
+Entrée utilisateur:
+- ValidatorMinerMain <validatorAddress> [logEvery] [attemptDelayMs]
+
+Chemin runtime:
+1. ValidatorActor vérifie IsValidator(address).
+2. Récupère top transactions via Mempool.RequestTopTransactions(2).
+3. Récupère snapshot ledger (difficulty, reward, lastHash, nextIndex).
+4. Construit block candidat = top2 + reward SYSTEM -> validator.
+5. Mine le bloc (nonce until hash prefix ok).
+6. Soumet au ledger via AppendBlock(...).
+7. Ledger valide et, si ok:
+   - ApplyTransactions sur wallets
+   - RemoveConfirmedTransactions sur mempool (hors reward)
+   - append bloc à la chaîne
+
+Règle de priorité effective de la mempool:
+- score(tx) = tx.amount * tx.fees
+- tri décroissant par score
+- en cas d'égalité, timestamp le plus ancien en premier
+
+
+====================================================
+7) Validation de sécurité par couches
+====================================================
+
+Couche A - WalletDirectory (soumission tx):
+- Existence wallets
+- amount > 0
+- fees >= 0
+- publicKey tx == publicKey sender
+- signature valide
+- solde disponible suffisant
+
+Couche B - Mempool:
+- anti-doublon (contains)
+- tri de priorité après ajout (score amount*fees)
+
+Couche C - Ledger (autorité finale):
+- index / previousHash / hash / difficulté
+- validateur autorisé
+- exactement 1 reward
+- au moins 1 tx normale
+- tx normales encore présentes dans la mempool
+- signatures et clés publiques valides
+- simulation des soldes avec totalDebit
+
+Couche D - ChainVerifier (audit global):
+- rejoue la chaîne depuis initialBalance
+- vérifie cohérence cryptographique et soldes finaux
+
+
+====================================================
+8) Diagrammes de séquence
+====================================================
+
+8.1 Soumission d'une transaction
+
+```mermaid
+sequenceDiagram
+    participant CLI as TransactionCliMain
+    participant SS as StateStore
+    participant WD as WalletDirectoryActor
+    participant W as WalletActor(from)
+    participant MP as MempoolActor
+
+    CLI->>SS: withLockedRuntime
+    SS->>WD: SubmitTransactionFromWallet(from,to,amount,fees,mempool)
+    WD->>MP: GetPendingOutgoing(from)
+    MP-->>WD: pending
+    WD->>W: CreateSignedTransaction(to,amount,fees)
+    W-->>WD: Right(tx signed)
+    WD->>WD: validateTransactionInternal(tx,pending)
+    WD->>MP: AddPrevalidatedTransaction(tx)
+    MP-->>WD: Right(())
+    WD-->>SS: Right(tx)
+    SS-->>CLI: sauvegarde + résultat
+```
+
+8.2 Minage d'un bloc
+
+```mermaid
+sequenceDiagram
+    participant CLI as ValidatorMinerMain
+    participant SS as StateStore
+    participant VA as ValidatorActor
+    participant WD as WalletDirectoryActor
+    participant MP as MempoolActor
+    participant LG as LedgerActor
+
+    CLI->>SS: withLockedRuntime
+    SS->>VA: MineOnce(logEvery,delay)
+    VA->>WD: IsValidator(address)
+    WD-->>VA: true
+    VA->>MP: RequestTopTransactions(2)
+    MP-->>VA: tx1, tx2
+    VA->>LG: GetSnapshot
+    LG-->>VA: difficulty,reward,lastHash,nextIndex
+    VA->>VA: mine(block)
+    VA->>LG: AppendBlock(block,WD,MP)
+    LG->>WD: ApplyTransactions(block.transactions)
+    LG->>MP: RemoveConfirmedTransactions(normalTxs)
+    LG-->>VA: Right(())
+    VA-->>SS: Right(block)
+    SS-->>CLI: sauvegarde + résultat
+```
+
+
+====================================================
+9) Persistance et format runtime
+====================================================
+
+Fichiers:
+- runtime/blockchain-state.txt
+- runtime/.blockchain-state.lock
+
+Format des lignes:
+- META|difficulty|miningReward
+- W|address|balance|initialBalance|secret|publicKey|isValidator
+- M|from|to|amount|fees|timestamp|publicKey|signature
+- B|index|previousHash|validator|timestamp|nonce|hash
+- T|from|to|amount|fees|timestamp|publicKey|signature
+
+Encodage:
+- Les champs texte sont encodés en Base64 URL-safe sans padding.
+
+Compatibilité legacy gérée par SnapshotCodec:
+- Wallet legacy sans publicKey: W à 6 colonnes
+- Tx legacy sans fees/timestamp/publicKey: M/T à 5 colonnes
+
+
+====================================================
+10) Comportement CLI et commandes
+====================================================
+
+Bootstrap:
+- sbt "runMain blockchain.BootstrapMain"
+- Crée un snapshot initial (wallets + mempool + genesis).
+
+Viewer:
+- sbt "runMain blockchain.ViewerMain [refreshMs]"
+- Reconstruit le runtime depuis l'état à chaque refresh.
+- Section mempool: affiche le reward fixe du bloc, le gain mineur estimé (reward + fees des top 2), et le score amount*fees de chaque tx.
+
+Transaction:
+- sbt "runMain blockchain.TransactionCliMain <from> <to> <amount> [fees]"
+- Utilise SubmitTransactionFromWallet.
+
+Mineur:
+- sbt "runMain blockchain.ValidatorMinerMain <validator> [logEvery] [delayMs]"
+- Mine une fois puis sort.
+
+
+====================================================
+11) Démo data et tests
+====================================================
+
+DemoData:
+- 6 wallets initiaux dont 2 validateurs.
+- Paire RSA générée pour chaque wallet.
+- Mempool initiale non vide avec frais variables.
+- Chaîne initiale = genesis.
+
+Tests (ActorFlowSpec):
+- Round-trip SnapshotCodec.
+- Création transaction signée valide.
+- Soumission mempool + minage + validité chaîne.
+
+
+====================================================
+12) Limitations connues
+====================================================
+
+- Pas de réseau distribué inter-noeuds.
+- Pas de consensus byzantin ni fork handling avancé.
+- Pas de base de données; persistance fichier local.
+- Clé privée stockée dans le snapshot (adapté au contexte pédagogique, non production).
+
+
+====================================================
+13) État d'alignement architecture cible
+====================================================
+
+Implémenté:
+- fees / timestamp / publicKey
+- signature asymétrique RSA
+- RequestTopTransactions(2)
+- AppendBlock / GetLastBlock
+- DeleteDoneTransactions et RequestTransaction (alias compat)
+- soumission wallet-driven via SubmitTransactionFromWallet
+
+Conservé volontairement:
+- WalletDirectoryActor comme couche d'orchestration/validation centrale
+- aliases legacy pour compatibilité
+

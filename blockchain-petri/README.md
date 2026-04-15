@@ -1,127 +1,266 @@
-# Blockchain Scala Land - version acteurs/messages
+# Blockchain Petri - Scala Actors Edition
 
-Ce projet modélise une blockchain **centralisée** mais organisée selon un **principe d'acteurs et de messages**.
+Implémentation pédagogique d'une blockchain centralisée, structurée avec un modèle acteurs/messages.
 
-## Idée
+Le projet ne simule pas un réseau pair-à-pair distribué: il exécute localement des acteurs isolés, avec un état partagé persistant dans un fichier texte.
 
-Le système n'essaie pas de simuler un réseau pair-à-pair complet. À la place, il sépare la logique en plusieurs acteurs :
+## Objectifs
 
-- **Wallet actors** : un acteur par wallet, avec adresse, solde, secret, rôle éventuel de validateur
-- **WalletDirectory actor** : point d'accès central aux wallets
-- **Mempool actor** : gère les transactions en attente
-- **Ledger actor** : gère la blockchain, valide et ajoute les blocs
-- **Validator actors** : un acteur par validateur, capable de miner un bloc candidat
+- Illustrer une architecture orientée messages (`ask` + `Promise`) en Scala.
+- Gérer des transactions signées (RSA), une mempool priorisée, un minage PoW, et une validation de chaîne.
+- Conserver l'état entre commandes CLI via `runtime/blockchain-state.txt`.
 
-Chaque commande CLI recharge l'état partagé depuis `runtime/blockchain-state.txt`, reconstruit le système d'acteurs, exécute une action, puis sauvegarde l'état.
+## Prérequis
 
-## Commandes
+- JDK 17+ recommandé
+- `sbt`
+- Scala 2.13.14 (configuré dans `build.sbt`)
 
-Initialisation :
+## Démarrage rapide
+
+Initialiser un état de démo:
 
 ```bash
 sbt "runMain blockchain.BootstrapMain"
 ```
 
-Viewer lecture seule :
+Lancer un viewer auto-refresh (1000 ms par défaut):
 
 ```bash
 sbt "runMain blockchain.ViewerMain"
 ```
 
-Ajouter une transaction :
+Créer une transaction (`fees` optionnel, défaut = `0.1`):
 
 ```bash
 sbt "runMain blockchain.TransactionCliMain alice bob 12"
+sbt "runMain blockchain.TransactionCliMain alice bob 12 0.4"
 ```
 
-Lancer le minage dans un autre terminal :
+Miner un bloc avec un validateur:
 
 ```bash
 sbt "runMain blockchain.ValidatorMinerMain validator-1"
 ```
 
-Paramètres optionnels du mineur :
+Paramètres optionnels mineur:
 
 ```bash
 sbt "runMain blockchain.ValidatorMinerMain validator-1 100 5"
 ```
 
-- `100` = afficher une tentative sur 100
-- `5` = attendre 5 ms entre les lignes affichées
+- `100`: log d'une tentative toutes les 100 itérations
+- `5`: pause de 5 ms entre deux logs affichés
 
-## Important
+Lancer les tests:
 
-La précédente version utilisait la sérialisation Java. Cette version l'abandonne totalement et utilise un **format texte stable** pour l'état partagé, afin d'éviter les erreurs du type `ClassCastException`.
+```bash
+sbt test
+```
 
-Si un ancien fichier `runtime/blockchain-state.bin` existe encore, il peut être supprimé. La nouvelle version écrit dans :
+## Vue d'ensemble de l'architecture
+
+Acteurs principaux:
+
+- `WalletActor` (1 par wallet): signature, vérification, débit/crédit, création de transaction signée.
+- `WalletDirectoryActor`: annuaire central des wallets et validations métier.
+- `MempoolActor`: transactions en attente, triées par priorité.
+- `LedgerActor`: autorité de validation des blocs et mise à jour de l'état final.
+- `ValidatorActor` (1 par validateur): construction/minage d'un bloc candidat.
+
+Le framework d'acteurs est maison:
+
+- Une mailbox (`LinkedBlockingQueue`) par acteur.
+- Un thread daemon par acteur.
+- `ActorRef.ask` envoie un message et attend la réponse (`Await.result`, timeout par défaut 5 s).
+
+## Modèle de données
+
+Une transaction contient:
+
+- `from`, `to`
+- `amount`
+- `fees`
+- `timestamp`
+- `publicKey`
+- `signature`
+
+Payload signé (hors signature):
+
+```text
+from|to|amount|fees|timestamp
+```
+
+Débit effectif appliqué au sender:
+
+```text
+totalDebit = amount + fees
+```
+
+Une transaction de reward est créée via `Transaction.reward(...)`:
+
+- `from = SYSTEM`
+- `signature = SYSTEM`
+- `fees = 0`
+
+## Politique de mempool et minage
+
+La mempool est triée à chaque insertion avec un score de priorité:
+
+- `score = amount * fees`
+- priorité 1: score décroissant
+- priorité 2: `timestamp` croissant (plus ancienne d'abord en cas d'égalité)
+
+Note: le débit réel reste `amount + fees`. Le score sert uniquement à ordonner la mempool.
+
+Le validateur mine:
+
+- les 2 meilleures transactions (`RequestTopTransactions(2)`)
+- + 1 reward transaction
+
+Le bloc est ensuite soumis au ledger (`AppendBlock`).
+
+## Pipeline de validation
+
+### 1) Soumission d'une transaction
+
+`TransactionCliMain` appelle `SubmitTransactionFromWallet` sur `WalletDirectoryActor`.
+
+Contrôles effectués:
+
+- existence sender/receiver
+- `amount > 0`
+- `fees >= 0`
+- solde disponible (`balance - pendingOutgoing`) suffisant pour `amount + fees`
+
+Puis:
+
+- le wallet source crée et signe la transaction (`CreateSignedTransaction`)
+- l'annuaire revalide signature + cohérence clé publique + solde
+- insertion mempool via `AddPrevalidatedTransaction`
+
+### 2) Ajout d'un bloc
+
+`LedgerActor` valide avant commit:
+
+- index/previousHash/hash/difficulté
+- validateur autorisé
+- exactement 1 reward
+- au moins 1 transaction normale
+- présence des transactions normales dans la mempool
+- signatures et clés publiques
+- simulation des soldes (`totalDebit`)
+
+Si valide:
+
+- application des transactions aux wallets (`ApplyTransactions`)
+- suppression des transactions confirmées de la mempool (`RemoveConfirmedTransactions`)
+- append du bloc à la chaîne
+
+## Persistance de l'état
+
+Le state est stocké dans:
 
 - `runtime/blockchain-state.txt`
 
-## Architecture
+Chaque commande CLI:
 
-### Wallet actor
+1. prend un lock exclusif (`runtime/.blockchain-state.lock`)
+2. charge le snapshot
+3. reconstruit les acteurs
+4. exécute l'action
+5. sauvegarde le snapshot mis à jour
 
-Messages typiques :
+Le format texte est versionné de fait par ses lignes:
+
+- `META|difficulty|miningReward`
+- `W|address|balance|initialBalance|secret|publicKey|isValidator`
+- `M|from|to|amount|fees|timestamp|publicKey|signature`
+- `B|index|previousHash|validator|timestamp|nonce|hash`
+- `T|from|to|amount|fees|timestamp|publicKey|signature`
+
+Les champs texte sont encodés en Base64 URL-safe. Le codec lit aussi les anciens formats sans `publicKey/fees/timestamp`.
+
+## Contrats de messages actuels
+
+### WalletActor
 
 - `GetSnapshot`
 - `SignPayload`
 - `VerifySignature`
+- `CreateSignedTransaction`
 - `ApplyCredit`
 - `ApplyDebit`
+- `IsValidator`
 
-### Mempool actor
+### WalletDirectoryActor
 
-Messages typiques :
+- `GetWallet`
+- `GetAllWallets`
+- `IsValidator`
+- `SubmitTransactionFromWallet`
+- `CreateTransaction` (chemin legacy/compat)
+- `ValidateTransaction`
+- `ApplyTransactions`
 
-- `TryAddTransaction`
+### MempoolActor
+
 - `GetTransactions`
+- `RequestTransaction` (alias compat)
+- `RequestTopTransactions`
 - `GetPendingOutgoing`
-- `RemoveTransactions`
+- `ContainsAll`
+- `SubmitTransaction`
+- `AddPrevalidatedTransaction`
+- `TryAddTransaction` (alias compat)
+- `DeleteDoneTransactions` (alias compat)
+- `RemoveConfirmedTransactions`
+- `RemoveTransactions` (alias compat)
 
-### Ledger actor
-
-Messages typiques :
+### LedgerActor
 
 - `GetSnapshot`
-- `TryAppendBlock`
+- `GetLastBlock`
+- `AppendBlock`
+- `TryAppendBlock` (alias compat)
 
-### Validator actor
-
-Messages typiques :
+### ValidatorActor
 
 - `MineOnce`
 
-## Démonstration multi-terminaux
+## Limitations assumées
 
-Terminal 1 :
+- Pas de réseau P2P réel, ni consensus distribué entre nœuds.
+- Pas de persistance en base de données (fichier texte local).
+- Pas de pool de threads: 1 thread daemon par acteur.
+- Le champ `secret` d'un wallet contient la clé privée encodée Base64.
+
+## Conseils de démo
+
+Terminal A:
 
 ```bash
 sbt "runMain blockchain.BootstrapMain"
-sbt "runMain blockchain.ViewerMain"
+sbt "runMain blockchain.ViewerMain 800"
 ```
 
-Terminal 2 :
+Terminal B:
 
 ```bash
-sbt "runMain blockchain.TransactionCliMain alice bob 12"
+sbt "runMain blockchain.TransactionCliMain alice bob 7 0.6"
+sbt "runMain blockchain.TransactionCliMain bob diana 3 0.2"
 ```
 
-Terminal 3 :
+Terminal C:
 
 ```bash
 sbt "runMain blockchain.ValidatorMinerMain validator-1 500 1"
 ```
 
-Le viewer affiche en boucle :
+Vous verrez dans le viewer:
 
-- la liste des validateurs
-- la liste des wallets
-- la mempool
-- les derniers blocs
-- la validité globale de la chaîne
-
-## Tests
-
-```bash
-sbt test
-```
+- la mempool triée par score (`amount * fees`)
+- le reward fixe du bloc et le gain mineur estimé (`reward + fees` des top 2)
+- la diminution des transactions après minage
+- l'incrément de la chaîne
+- la validité globale (`ChainVerifier`)

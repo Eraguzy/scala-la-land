@@ -44,12 +44,17 @@ object ChainVerifier {
         val sender = walletsByAddress.getOrElse(tx.from, return false)
         if (!walletsByAddress.contains(tx.to)) return false
         if (tx.amount <= 0) return false
-        if (CryptoUtils.sha256(tx.payload + sender.secret) != tx.signature) return false
+        if (tx.fees < 0) return false
+        if (sender.publicKey != tx.publicKey) return false
+        val signatureValid =
+          if (tx.publicKey.nonEmpty) CryptoUtils.verify(tx.payload, tx.signature, tx.publicKey)
+          else CryptoUtils.sha256(tx.legacyPayload + sender.secret) == tx.signature
+        if (!signatureValid) return false
 
         val senderBalance = replayBalances.getOrElse(tx.from, BigDecimal(0))
-        if (senderBalance < tx.amount) return false
+        if (senderBalance < tx.totalDebit) return false
 
-        replayBalances.update(tx.from, senderBalance - tx.amount)
+        replayBalances.update(tx.from, senderBalance - tx.totalDebit)
         replayBalances.update(tx.to, replayBalances.getOrElse(tx.to, BigDecimal(0)) + tx.amount)
       }
 

@@ -6,6 +6,13 @@ import scala.concurrent.Promise
 sealed trait LedgerMessage
 object LedgerMessage {
   final case class GetSnapshot(replyTo: Promise[LedgerSnapshot]) extends LedgerMessage
+  final case class GetLastBlock(replyTo: Promise[Block]) extends LedgerMessage
+  final case class AppendBlock(
+      block: Block,
+      walletDirectory: ActorRef[WalletDirectoryMessage],
+      mempool: ActorRef[MempoolMessage],
+      replyTo: Promise[Either[String, Unit]]
+  ) extends LedgerMessage
   final case class TryAppendBlock(
       block: Block,
       walletDirectory: ActorRef[WalletDirectoryMessage],
@@ -43,13 +50,19 @@ final class LedgerActor(
     case GetSnapshot(replyTo) =>
       replyTo.success(LedgerSnapshot(difficulty, miningReward, chain))
 
-    case TryAppendBlock(block, walletDirectory, mempool, replyTo) =>
+    case GetLastBlock(replyTo) =>
+      replyTo.success(chain.last)
+
+    case AppendBlock(block, walletDirectory, mempool, replyTo) =>
       val result = validateBlock(block, walletDirectory, mempool).map { _ =>
         walletDirectory.ask(ApplyTransactions(block.transactions, _))
-        mempool.ask(RemoveTransactions(block.transactions.filterNot(_.from == Transaction.SystemAddress), _))
+        mempool.ask(RemoveConfirmedTransactions(block.transactions.filterNot(_.from == Transaction.SystemAddress), _))
         chain = chain :+ block
       }
       replyTo.success(result)
+
+    case TryAppendBlock(block, walletDirectory, mempool, replyTo) =>
+      this.receive(AppendBlock(block, walletDirectory, mempool, replyTo))
   }
 
   private def validateBlock(
@@ -101,10 +114,16 @@ final class LedgerActor(
       if (!stateMap.contains(tx.from)) return Left(s"Wallet source inconnu : ${tx.from}")
       if (!stateMap.contains(tx.to)) return Left(s"Wallet destination inconnu : ${tx.to}")
       if (tx.amount <= 0) return Left("Montant de transaction invalide.")
+      if (tx.fees < 0) return Left("Frais de transaction invalides.")
 
       val sender = stateMap(tx.from)
-      val expectedSignature = CryptoUtils.sha256(tx.payload + sender.secret)
-      if (expectedSignature != tx.signature) {
+      if (sender.publicKey != tx.publicKey) {
+        return Left(s"Clé publique incohérente pour la transaction ${tx.from} -> ${tx.to}")
+      }
+      val signatureValid =
+        if (tx.publicKey.nonEmpty) CryptoUtils.verify(tx.payload, tx.signature, tx.publicKey)
+        else CryptoUtils.sha256(tx.legacyPayload + sender.secret) == tx.signature
+      if (!signatureValid) {
         return Left(s"Signature invalide pour la transaction ${tx.from} -> ${tx.to}")
       }
     }
@@ -113,11 +132,11 @@ final class LedgerActor(
 
     normalTxs.foreach { tx =>
       val current = simulatedBalances.getOrElse(tx.from, BigDecimal(0))
-      if (current < tx.amount) {
+      if (current < tx.totalDebit) {
         return Left(s"Solde insuffisant pendant la simulation pour ${tx.from}")
       }
 
-      simulatedBalances.update(tx.from, current - tx.amount)
+      simulatedBalances.update(tx.from, current - tx.totalDebit)
       simulatedBalances.update(tx.to, simulatedBalances.getOrElse(tx.to, BigDecimal(0)) + tx.amount)
     }
 
