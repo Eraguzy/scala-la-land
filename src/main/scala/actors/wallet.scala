@@ -8,6 +8,7 @@ import functions.Crypto
 
 object WalletActor {
 
+  // L'état contient l'identité et le solde du portefeuille
   case class State(
                     publicKey: String,
                     privateKey: String,
@@ -31,18 +32,28 @@ object WalletActor {
           Behaviors.same
 
         case Wallet.CreateTx(to, amount) =>
-          if (amount <= state.balance) {
-            val unsigned = UnsignedTransaction(state.publicKey, to, amount)
+          if (amount <= state.balance) { // on check si le solde est suffisant
+            val unsigned = UnsignedTransaction(
+              id = java.util.UUID.randomUUID().toString,
+              from = state.publicKey,
+              to = to,
+              amount = amount,
+              fees = 10,
+              timestamp = System.currentTimeMillis()
+            )
 
-            val signature = Crypto.sign(unsigned.toString, state.privateKey)
+            // On signe la transaction avec la clé privée du Wallet
+            val signature = Crypto.sign(unsigned, state.privateKey)
             val signed = SignedTransaction(unsigned, signature)
 
-            ctx.log.info(s"Wallet ${state.publicKey} : Envoi de $amount vers Mempool (Solde restant : ${state.balance - amount})")
-
+            ctx.log.info(s"Wallet ${state.publicKey} : TX ${unsigned.id} signée et envoyée vers Mempool.")
             mempool ! Mempool.AddTx(signed)
 
-            behavior(state.copy(balance = state.balance - amount), mempool)
-          } else {
+ 
+            val newState = state.copy(balance = state.balance - amount)
+            behavior(newState, mempool)
+          }
+          else {
             ctx.log.error(s"Wallet ${state.publicKey} : Solde insuffisant ($amount > ${state.balance})")
             Behaviors.same
           }

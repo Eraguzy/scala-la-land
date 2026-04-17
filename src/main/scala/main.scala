@@ -16,7 +16,7 @@ object Main {
 
       // 2. Spawn du Wallet (Alice commence avec 100)
       val walletAlice = ctx.spawn(
-        WalletActor("alice_pub", "alice_priv", 100, mempool),
+        WalletActor("alice_key", "alice_key", 100, mempool),
         "wallet-alice"
       )
 

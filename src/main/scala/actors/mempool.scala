@@ -44,13 +44,13 @@
 //// mais notre mempool doit pouvoir stocker une liste de transactions,
 //// on utilise donc une fonction récursive qui prend en paramètre la liste des transactions courante
 
-
 package actors
 
 import akka.actor.typed._
 import akka.actor.typed.scaladsl._
-import messages.Mempool // IMPORT PRÉCIS
+import messages.Mempool
 import objects.SignedTransaction
+import functions.Crypto // On utilise ta logique de vérification
 
 object MempoolActor {
   def apply(): Behavior[Mempool.Command] = behavior(List.empty)
@@ -58,17 +58,36 @@ object MempoolActor {
   private def behavior(txs: List[SignedTransaction]): Behavior[Mempool.Command] =
     Behaviors.receive { (ctx, msg) =>
       msg match {
-        case Mempool.AddTx(tx) =>
-          ctx.log.info(s"Mempool : Transaction ajoutée")
-          behavior(tx :: txs)
+        case Mempool.AddTx(signedTx) =>
+
+          //vérification de la signature, cf functions.Crypto
+          val isValid = Crypto.verify(
+            signedTx.tx,
+            signedTx.signature,
+            signedTx.tx.from
+          )
+
+          if (isValid) {
+            ctx.log.info(s"Mempool : Signature valide pour TX ${signedTx.tx.id}. Ajout à la Priority Queue.")
+
+            //ajout dans la queue
+            val updatedTxs = (signedTx :: txs).sortBy(_.tx.fees)(Ordering[BigInt].reverse)
+
+            behavior(updatedTxs)
+          } else {
+            ctx.log.error(s"Mempool : REJET ! Signature invalide ou message corrompu pour TX ${signedTx.tx.id}.")
+            Behaviors.same
+          }
 
         case Mempool.GetTxs(replyTo) =>
+          // On renvoie la liste déjà triée par priorité au Validator
           replyTo ! Mempool.Txs(txs)
-          //supprimer le ou les txs en question
           Behaviors.same
 
         case Mempool.RemoveTxs(confirmedTxs) =>
-          val remaining = txs.filterNot(t => confirmedTxs.contains(t))
+          // Nettoyage après minage réussi
+          val remaining = txs.filterNot(t => confirmedTxs.exists(_.tx.id == t.tx.id))
+          ctx.log.info(s"Mempool : Nettoyage effectué. ${remaining.size} transactions restantes.")
           behavior(remaining)
       }
     }
