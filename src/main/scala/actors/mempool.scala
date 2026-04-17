@@ -50,17 +50,18 @@ import akka.actor.typed._
 import akka.actor.typed.scaladsl._
 import messages.Mempool
 import objects.SignedTransaction
-import functions.Crypto // On utilise ta logique de vérification
+import functions.Crypto
 
 object MempoolActor {
+
   def apply(): Behavior[Mempool.Command] = behavior(List.empty)
 
   private def behavior(txs: List[SignedTransaction]): Behavior[Mempool.Command] =
     Behaviors.receive { (ctx, msg) =>
       msg match {
+
         case Mempool.AddTx(signedTx) =>
 
-          //vérification de la signature, cf functions.Crypto
           val isValid = Crypto.verify(
             signedTx.tx,
             signedTx.signature,
@@ -70,24 +71,34 @@ object MempoolActor {
           if (isValid) {
             ctx.log.info(s"Mempool : Signature valide pour TX ${signedTx.tx.id}. Ajout à la Priority Queue.")
 
-            //ajout dans la queue
+            // Simulation d'une Priority Queue : On ajoute et on trie par fees décroissants
             val updatedTxs = (signedTx :: txs).sortBy(_.tx.fees)(Ordering[BigInt].reverse)
-
+            ctx.log.info("liste mise à jour : " + updatedTxs.map(_.tx.id).mkString(", "))
             behavior(updatedTxs)
           } else {
-            ctx.log.error(s"Mempool : REJET ! Signature invalide ou message corrompu pour TX ${signedTx.tx.id}.")
+            ctx.log.error(s"Mempool : REJET ! Signature invalide pour TX ${signedTx.tx.id}.")
             Behaviors.same
           }
 
+        //c'est le message reçu par la memepool de la part du validateur, en vue de récupérer les 2 premieres transactions pour constituer un bloc
         case Mempool.GetTxs(replyTo) =>
-          // On renvoie la liste déjà triée par priorité au Validator
-          replyTo ! Mempool.Txs(txs)
-          Behaviors.same
+          // on sort les 2 premières tx
+          val (toSend, rest) = txs.splitAt(2)
+
+          if (toSend.nonEmpty) {
+            ctx.log.info(s"Mempool : Envoi de ${toSend.size} transactions au Validator. Nettoyage de la file.")
+            replyTo ! Mempool.Txs(toSend)
+            behavior(rest) //on met à jour la mempool en retirant les tx envoyées au validator
+          } else {
+            ctx.log.info("Mempool : Demande reçue mais la file est vide.")
+            replyTo ! Mempool.Txs(List.empty)
+            Behaviors.same
+          }
 
         case Mempool.RemoveTxs(confirmedTxs) =>
-          // Nettoyage après minage réussi
+          // Ce message reste utile au cas où le Validator échoue et qu'on doive synchroniser
           val remaining = txs.filterNot(t => confirmedTxs.exists(_.tx.id == t.tx.id))
-          ctx.log.info(s"Mempool : Nettoyage effectué. ${remaining.size} transactions restantes.")
+          ctx.log.info(s"Mempool : Nettoyage manuel demandé. Reste : ${remaining.size}")
           behavior(remaining)
       }
     }
