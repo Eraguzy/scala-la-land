@@ -1,0 +1,17 @@
+[0m[[0m[31merror[0m] [0m[0m[31m[31m-- [E006] Not Found Error: /Users/matiasvinkovic/Docs/scala-la-land/src/main/scala/messages/db.scala:8:30 [0m[0m[0m
+[0m[[0m[31merror[0m] [0m[0m[31m8 |[0m  [33mcase class[0m [35mSaveBlock[0m([36mblock[0m: [35mBlock[0m, [36mreplyTo[0m: [35mActorRef[0m[[35mResponse[0m]) [33mextends[0m [35mCommand[0m[0m
+[0m[[0m[31merror[0m] [0m[0m[31m[31m  |[0m                              ^^^^^[0m[0m
+[0m[[0m[31merror[0m] [0m[0m[31m  |[0m                              Not found: type Block[0m
+[0m[[0m[31merror[0m] [0m[0m[31m  |[0m[0m
+[0m[[0m[31merror[0m] [0m[0m[31m  |[0m longer explanation available when compiling with `-explain`[0m
+[0m[[0m[31merror[0m] [0m[0m[31m[31m-- [E006] Not Found Error: /Users/matiasvinkovic/Docs/scala-la-land/src/main/scala/actors/validator.scala:25:27 [0m[0m[0m
+[0m[[0m[31merror[0m] [0m[0m[31m25 |[0m            [33mval[0m [36mnewBlock[0m = Block(scala.util.Random.nextLong([31m1000[0m), txs, [31m"hash_prec"[0m, System.currentTimeMillis())[0m
+[0m[[0m[31merror[0m] [0m[0m[31m[31m   |[0m                           ^^^^^[0m[0m
+[0m[[0m[31merror[0m] [0m[0m[31m   |[0m                           Not found: Block[0m
+[0m[[0m[31merror[0m] [0m[0m[31m   |[0m[0m
+[0m[[0m[31merror[0m] [0m[0m[31m   |[0m longer explanation available when compiling with `-explain`[0m
+[0m[[0m[31merror[0m] [0m[0m[31m[31m-- [E008] Not Found Error: /Users/matiasvinkovic/Docs/scala-la-land/src/main/scala/messages/db.scala:4:15 [0m[0m[0m
+[0m[[0m[31merror[0m] [0m[0m[31m4 |[0m[33mimport[0m objects.Block [34m// AJOUTE CETTE LIGNE[0m[0m
+[0m[[0m[31merror[0m] [0m[0m[31m[31m  |[0m               ^^^^^[0m[0m
+[0m[[0m[31merror[0m] [0m[0m[31m  |[0m               value Block is not a member of objects[0m
+[0m[[0m[31merror[0m] [0m[0mthree errors found[0m
