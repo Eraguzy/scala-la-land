@@ -3,15 +3,16 @@ package objects
 import java.util.UUID
 
 case class UnsignedTransaction(
-                                id: String,           // ID unique (ex: UUID)
-                                from: String,         // Public Key de l'expéditeur
-                                to: String,           // Public Key du destinataire
-                                amount: BigInt,       // Montant
-                                fees: BigInt,         // Frais pour la Priority Queue
-                                timestamp: Long       // Date de création
-                              )
+    from: String, // public key of the sender
+    to: String, // public key of the recipient
+    amount: BigInt, // amount
+    fees: BigInt, // fees for the priority queue
+    nonce: Long, // number of previous transactions sent by this wallet
+    timestamp: Long // creation date
+)
 
 case class SignedTransaction(
-                              tx: UnsignedTransaction,
-                              signature: String
-                            )
+    tx: UnsignedTransaction,
+    txId: String, // should be Crypto.hashTx(tx)
+    signature: String
+)
