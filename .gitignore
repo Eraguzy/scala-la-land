@@ -3,6 +3,7 @@ target/
 project/target/
 project/project/
 dist/
+.bloop/
 
 # IDE
 .idea/
