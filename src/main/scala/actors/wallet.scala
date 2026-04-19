@@ -10,20 +10,23 @@ object WalletActor {
 
   // L'état contient l'identité et le solde du portefeuille
   case class State(
-                    publicKey: String,
-                    privateKey: String,
-                    balance: BigInt
-                  )
+      publicKey: String,
+      privateKey: String,
+      balance: BigInt
+  )
 
   def apply(
-             pubKey: String,
-             privKey: String,
-             initialBalance: BigInt,
-             mempool: ActorRef[Mempool.Command]
-           ): Behavior[Wallet.Command] =
+      pubKey: String,
+      privKey: String,
+      initialBalance: BigInt,
+      mempool: ActorRef[Mempool.Command]
+  ): Behavior[Wallet.Command] =
     behavior(State(pubKey, privKey, initialBalance), mempool)
 
-  private def behavior(state: State, mempool: ActorRef[Mempool.Command]): Behavior[Wallet.Command] =
+  private def behavior(
+      state: State,
+      mempool: ActorRef[Mempool.Command]
+  ): Behavior[Wallet.Command] =
     Behaviors.receive { (ctx, msg) =>
       msg match {
 
@@ -46,15 +49,17 @@ object WalletActor {
             val signature = Crypto.sign(unsigned, state.privateKey)
             val signed = SignedTransaction(unsigned, signature)
 
-            ctx.log.info(s"Wallet ${state.publicKey} : TX ${unsigned.id} signée et envoyée vers Mempool.")
+            ctx.log.info(
+              s"Wallet ${state.publicKey} : TX ${unsigned.id} signée et envoyée vers Mempool."
+            )
             mempool ! Mempool.AddTx(signed)
 
- 
             val newState = state.copy(balance = state.balance - amount)
             behavior(newState, mempool)
-          }
-          else {
-            ctx.log.error(s"Wallet ${state.publicKey} : Solde insuffisant ($amount > ${state.balance})")
+          } else {
+            ctx.log.error(
+              s"Wallet ${state.publicKey} : Solde insuffisant ($amount > ${state.balance})"
+            )
             Behaviors.same
           }
       }
