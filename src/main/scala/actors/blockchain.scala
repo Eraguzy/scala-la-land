@@ -9,9 +9,13 @@ import scala.util.{Failure, Success, Using}
 object DBActor {
 
   // Supervision strategy: resume the actor instead of crashing on exception
-  def apply(): Behavior[DB.Command] =
+  def apply(): Behavior[DB.Command] = {
+    val file = new java.io.File("ledger.txt")
+    if (file.exists()) file.delete()
+
     Behaviors.supervise(behavior("000", 0))
       .onFailure[Exception](SupervisorStrategy.resume)
+  }
 
   private def behavior(lastHash: String, currentId: Int): Behavior[DB.Command] =
     Behaviors.receive { (ctx, msg) =>
