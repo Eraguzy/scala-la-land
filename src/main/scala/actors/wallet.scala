@@ -7,52 +7,109 @@ import objects._
 import functions.Crypto
 
 object WalletActor {
-  // public key = n-pubInt, private key = n-privInt
+  // a queue is being used to handle multiple tx requests sequentially,
+  // to avoid concurrency issues with balance and nonce management
+  private case class PendingTx(
+      to: String,
+      amount: BigInt,
+      fee: BigInt,
+      replyTo: ActorRef[Boolean]
+  )
+
+  // public key = "n-pubInt", private key = "n-privInt"
   case class State(
       n: BigInt,
       pubInt: BigInt,
       privInt: BigInt,
-      balance: BigInt,
+      initialBalance: BigInt,
       name: String, // for logs, not used in txs
-      nonce: Long = 0L
+      nonce: Long = 0L,
+      txInProgress: Boolean = false // append in queue or process
   )
 
   def apply(
       name: String,
       initialBalance: BigInt,
-      mempool: ActorRef[Mempool.Command]
+      mempool: ActorRef[Mempool.Command],
+      db: ActorRef[DB.Command]
   ): Behavior[Wallet.Command] = {
     val (n, pubInt, privInt) = Crypto.genWalletInts()
 
-    behavior(State(n, pubInt, privInt, initialBalance, name), mempool)
+    behavior(
+      State(n, pubInt, privInt, initialBalance, name, txInProgress = false),
+      mempool,
+      db,
+      pendingTxs = Vector.empty
+    )
   }
 
   private def behavior(
       state: State,
-      mempool: ActorRef[
-        Mempool.Command
-      ] // allow a wallet to be related to a mempool to send txs
+      // allow a wallet to be related to infras to send txs
+      mempool: ActorRef[Mempool.Command],
+      db: ActorRef[DB.Command],
+      pendingTxs: Vector[PendingTx]
   ): Behavior[Wallet.Command] =
     Behaviors.receive { (ctx, msg) =>
       msg match {
 
+        // wallet's amount = initial balance + balance returned by blockchain
         case Wallet.GetBalance(replyTo) =>
-          replyTo ! state.balance
+          val balanceReplyAdapter = ctx.spawnAnonymous(
+            Behaviors.receiveMessage[DB.BalanceResponse] { response =>
+              val chainBalance = BigDecimal(response.balance).toBigInt
+              replyTo ! (state.initialBalance + chainBalance)
+              Behaviors.stopped
+            }
+          )
+
+          db ! DB.GetBalanceAtDate(
+            walletPublicKey(state),
+            System.currentTimeMillis(),
+            balanceReplyAdapter
+          )
           Behaviors.same
 
-        case Wallet.CreateTx(to, amount, fee) =>
-          // check wallet balance
-          val totalCost = amount + fee
-          if (totalCost > state.balance) {
-            ctx.log.error(
-              s"wallet ${state.name} : insufficient funds ($totalCost > ${state.balance})"
+        case Wallet.GetPublicKey(replyTo) =>
+          replyTo ! walletPublicKey(state)
+          Behaviors.same
+
+        case Wallet.GetPrivateKey(replyTo) =>
+          replyTo ! walletPrivateKey(state)
+          Behaviors.same
+
+        // wrapper to get balance from db before creating the tx
+        case Wallet.CreateTx(to, amount, fee, replyTo) =>
+          val request = PendingTx(to, amount, fee, replyTo)
+          if (state.txInProgress) {
+            behavior(
+              state,
+              mempool,
+              db,
+              pendingTxs :+ request //  append to pending txs if another tx is in progress
             )
-            Behaviors.same
+          } else {
+            requestBalanceForTx(ctx, request)
+            val newState = state.copy(txInProgress = true)
+            behavior(newState, mempool, db, pendingTxs)
+          }
+
+        case Wallet.CreateTxInternal(
+              to,
+              amount,
+              fee,
+              currentBalance,
+              replyTo
+            ) =>
+          if (currentBalance < amount + fee) {
+            ctx.log.error(s"wallet ${state.name}: insufficient funds")
+            replyTo ! false
+            continueWithNextTx(ctx, state, mempool, db, pendingTxs)
           } else {
 
             // tx params : origin, dest, amount, fee, nonce, timestamp
             val unsigned = UnsignedTransaction(
-              from = publicKey(state),
+              from = walletPublicKey(state),
               to = to,
               amount = amount,
               fees = fee,
@@ -67,29 +124,72 @@ object WalletActor {
               ctx.log.error(
                 s"wallet ${state.name} : failed to sign transaction ${unsigned.nonce}"
               )
-              Behaviors.same
+              replyTo ! false
+              continueWithNextTx(ctx, state, mempool, db, pendingTxs)
 
             } else {
               // we send signed tx + tx data to mempool
               val signed = SignedTransaction(unsigned, txHash, signature.get)
 
               ctx.log.info(
-                s"wallet ${state.name} : TX ${unsigned.nonce} from wallet ${publicKey(state)} signed and sent to Mempool."
+                s"wallet ${state.name} : TX ${unsigned.nonce} from wallet ${walletPublicKey(state)} signed and sent to Mempool."
               )
               mempool ! Mempool.AddTx(
                 signed
               ) // add signature AND tx data to mempool, contained in this variable
+              replyTo ! true // fixme : it should be waiting for mempool confirmation
 
               // update local state (balance and nonce) after sending the tx to mempool
               val newState = state.copy(
-                balance = state.balance - totalCost,
+                initialBalance = state.initialBalance - amount - fee,
                 nonce = state.nonce + 1
               )
-              behavior(newState, mempool)
+              continueWithNextTx(ctx, newState, mempool, db, pendingTxs)
             }
           }
       }
     }
-  def publicKey(state: State): String = s"${state.n}-${state.pubInt}"
-  def privateKey(state: State): String = s"${state.n}-${state.privInt}"
+
+  private def requestBalanceForTx(
+      ctx: ActorContext[Wallet.Command],
+      request: PendingTx
+  ): Unit = {
+    val balanceReceiver = ctx.spawnAnonymous(
+      Behaviors.receiveMessage[BigInt] { balance =>
+        ctx.self ! Wallet.CreateTxInternal(
+          request.to,
+          request.amount,
+          request.fee,
+          balance,
+          request.replyTo
+        )
+        Behaviors.stopped
+      }
+    )
+    ctx.self ! Wallet.GetBalance(balanceReceiver)
+  }
+
+  private def continueWithNextTx(
+      ctx: ActorContext[Wallet.Command],
+      state: State,
+      mempool: ActorRef[Mempool.Command],
+      db: ActorRef[DB.Command],
+      pendingTxs: Vector[PendingTx]
+  ): Behavior[Wallet.Command] =
+    pendingTxs.headOption match {
+      case Some(nextRequest) =>
+        requestBalanceForTx(ctx, nextRequest)
+        val newState = state.copy(txInProgress = true)
+        behavior(newState, mempool, db, pendingTxs.tail)
+      case None =>
+        val newState = state.copy(txInProgress = false)
+        behavior(newState, mempool, db, pendingTxs)
+    }
+
+  private def walletPublicKey(state: State): String =
+    s"${state.n}-${state.pubInt}"
+
+  private def walletPrivateKey(state: State): String =
+    s"${state.n}-${state.privInt}"
+
 }
