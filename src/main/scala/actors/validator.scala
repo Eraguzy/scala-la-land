@@ -31,7 +31,7 @@ object ValidatorActor {
           } else {
             ctx.log.info(s"Validator : Minage d'un bloc avec ${txs.size} transactions.")
             val newBlock = Block(scala.util.Random.nextLong(1000), txs, "hash_prec", System.currentTimeMillis())
-            db ! DB.SaveBlock(newBlock, ctx.system.deadLetters)
+            db ! DB.SaveBlock(newBlock)
 
             // On prévient la mempool que ces transactions sont traitées
             mempool ! Mempool.RemoveTxs(txs)
