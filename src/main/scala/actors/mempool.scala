@@ -89,7 +89,8 @@ object MempoolActor {
             Behaviors.same
           }
 
-        // c'est le message reçu par la memepool de la part du validateur, en vue de récupérer les 2 premieres transactions pour constituer un bloc
+        // Le validator récupère un lot de travail sans modifier la mempool.
+        // La suppression réelle se fait uniquement via RemoveTxs après confirmation DB.
         case Mempool.GetTxs(replyTo) =>
           // on sort les 2 premières tx
           /**
@@ -102,12 +103,10 @@ object MempoolActor {
 
           if (toSend.nonEmpty) {
             ctx.log.info(
-              s"Mempool : Envoi de ${toSend.size} transactions au Validator. Nettoyage de la file."
+              s"Mempool : Envoi de ${toSend.size} transactions au Validator"
             )
             replyTo ! Mempool.Txs(toSend)
-            behavior(
-              rest
-            ) // on met à jour la mempool en retirant les tx envoyées au validator
+            Behaviors.same
           } else {
             ctx.log.info("Mempool : Demande reçue mais la file est vide.")
             replyTo ! Mempool.Txs(List.empty)
@@ -121,6 +120,9 @@ object MempoolActor {
           ctx.log.info(
             s"Mempool : Nettoyage manuel demandé. Reste : ${remaining.size}"
           )
+          ctx.log.info(
+              "liste mise à jour : " + remaining.map(_.txId).mkString(", ")
+            )
           behavior(remaining)
       }
     }

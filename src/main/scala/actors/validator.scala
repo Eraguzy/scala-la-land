@@ -59,7 +59,8 @@ object ValidatorActor {
           val txsData = pendingTxs.map(_.txId).mkString("-")
           val (nonce, blockHash) = functions.Miner.mine(txsData, lastHash, timestamp, 0, DIFFICULTY)
 
-          ctx.log.info(s"Validator : Bloc miné ! Envoi à la DB...")
+          //ctx.log.info(s"Validator : Bloc miné ! Envoi à la DB...")
+          ctx.log.info(s"Validator : ⛏️ BLOC MINÉ ! Nonce trouvé : $nonce | Hash : $blockHash")
           val newBlock = Block(currentId, pendingTxs, lastHash, timestamp)
 
           // On passe l'adapter à la DB pour qu'elle puisse répondre
