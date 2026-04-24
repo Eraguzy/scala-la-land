@@ -57,52 +57,65 @@ object Main {
       // )
 
       Behaviors.setup[Nothing] { ctx =>
-        // infrastructure
+        // 1. Infrastructure
         val db = ctx.spawn(DBActor(), "blockchain-db")
         val mempool = ctx.spawn(MempoolActor(), "mempool")
         ctx.spawn(ValidatorActor(mempool, db), "validator")
-        // wallets
-        val charlie =
-          ctx.spawn(WalletActor("charlie", 50, mempool, db), "Charlie")
+
+        // 2. Wallets
+        val charlie = ctx.spawn(WalletActor("charlie", 300, mempool, db), "Charlie")
         val alice = ctx.spawn(WalletActor("alice", 500, mempool, db), "Alice")
 
-        // receivers for test
-        val aliceBalanceBeforeReceiver = ctx.spawnAnonymous(
-          Behaviors.receiveMessage[BigInt] { balance =>
-            println(s"Alice balance BEFORE tx: $balance")
-            Behaviors.stopped
-          }
-        )
-        val aliceBalanceAfterReceiver = ctx.spawnAnonymous(
-          Behaviors.receiveMessage[BigInt] { balance =>
-            println(s"Alice balance AFTER tx: $balance")
-            Behaviors.same
-          }
-        )
-        // once confirmed we can check alice's balance again
-        val txResultReceiver = ctx.spawnAnonymous(
+        // 3. Receivers pour le monitoring
+        val genericResultReceiver = ctx.spawnAnonymous(
           Behaviors.receiveMessage[Boolean] { accepted =>
-            println(s"Alice tx accepted: $accepted")
-            alice ! Wallet.GetBalance(aliceBalanceAfterReceiver)
+            println(s"Transaction status: $accepted")
             Behaviors.same
           }
         )
 
-        // trigger receivers
-        alice ! Wallet.GetBalance(aliceBalanceBeforeReceiver)
-        // get charlie's key, then alice sends a tx to charlie
+        val balanceReceiver = ctx.spawnAnonymous(
+          Behaviors.receiveMessage[BigInt] { balance =>
+            println(s"Current balance check: $balance")
+            Behaviors.same
+          }
+        )
+
+        // --- EXÉCUTION DU SCÉNARIO ---
+
+        // A. Alice vers Charlie (Tes 3 transactions initiales)
         val charliePubKeyReceiver = ctx.spawnAnonymous(
           Behaviors.receiveMessage[String] { charliePubKey =>
-            alice ! Wallet.CreateTx(charliePubKey, 50, 1, txResultReceiver)
-            alice ! Wallet.CreateTx(charliePubKey, 441, 1, txResultReceiver)
-            alice ! Wallet.CreateTx(charliePubKey, 2, 1, txResultReceiver)
+            println("Alice initie 3 transactions vers Charlie...")
+            alice ! Wallet.CreateTx(charliePubKey, 50, 3, genericResultReceiver)
+            alice ! Wallet.CreateTx(charliePubKey, 300, 2, genericResultReceiver)
+            alice ! Wallet.CreateTx(charliePubKey, 2, 4, genericResultReceiver)
             Behaviors.stopped
           }
         )
         charlie ! Wallet.GetPublicKey(charliePubKeyReceiver)
 
+        // B. Charlie vers Alice (Les 2 nouvelles transactions)
+        val alicePubKeyReceiver = ctx.spawnAnonymous(
+          Behaviors.receiveMessage[String] { alicePubKey =>
+            // On attend un court instant ou on lance directement
+            // Transaction 1 : Petit montant, frais normaux
+            charlie ! Wallet.CreateTx(alicePubKey, 10, 1, genericResultReceiver)
+
+            // Transaction 2 : Tentative d'envoyer plus que son solde initial (Test de sécurité)
+            // Note : Charlie n'a que 50 au départ.
+            charlie ! Wallet.CreateTx(alicePubKey, 100, 5, genericResultReceiver)
+            Behaviors.stopped
+          }
+        )
+
+        // On récupère la clé d'Alice pour que Charlie puisse lui envoyer de l'argent
+        alice ! Wallet.GetPublicKey(alicePubKeyReceiver)
+
         Behaviors.same
       },
+
+
       "blockchain-system"
     )
     println(">>> Appuie sur ENTRÉE pour arrêter la simulation <<<")
