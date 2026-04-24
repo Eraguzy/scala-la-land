@@ -122,7 +122,7 @@ object WalletActor {
             val signature = Crypto.sign(txHash, state.n, state.privInt)
             if (signature.isEmpty) {
               ctx.log.error(
-                s"wallet ${state.name} : failed to sign transaction ${unsigned.nonce}"
+                s"wallet ${state.name} : failed to sign transaction ${txHash}"
               )
               replyTo ! false
               continueWithNextTx(ctx, state, mempool, db, pendingTxs)
@@ -132,7 +132,7 @@ object WalletActor {
               val signed = SignedTransaction(unsigned, txHash, signature.get)
 
               ctx.log.info(
-                s"wallet ${state.name} : TX ${unsigned.nonce} from wallet ${walletPublicKey(state)} signed and sent to Mempool."
+                s"wallet ${state.name} : TX ${txHash} (${unsigned.nonce}) signed and sent to Mempool."
               )
               mempool ! Mempool.AddTx(
                 signed
