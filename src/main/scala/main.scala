@@ -5,6 +5,7 @@ import akka.actor.typed.scaladsl._
 import actors._
 import messages._
 import scala.concurrent.duration._
+import scala.io.StdIn
 
 object Main {
   def main(args: Array[String]): Unit = {
@@ -100,9 +101,11 @@ object Main {
         )
         charlie ! Wallet.GetPublicKey(charliePubKeyReceiver)
 
-        Behaviors.empty
+        Behaviors.same
       },
       "blockchain-system"
     )
+    println(">>> Appuie sur ENTRÉE pour arrêter la simulation <<<")
+    StdIn.readLine()
   }
 }
