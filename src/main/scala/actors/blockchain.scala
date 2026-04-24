@@ -49,10 +49,11 @@ object DBActor {
               
               replyTo ! DB.Failed(s"I/O Error: ${exception.getMessage}")
               
+
               Behaviors.same
           }
 
-        case DB.SaveBlock(block) =>
+        case DB.SaveBlock(block, replyTo) =>
           // Fire-and-forget block saving
           val writeResult = Using(new PrintWriter(new FileWriter("ledger.txt", true))) { writer =>
             writer.println(s"BLOCK|ID:$currentId|PREV:$lastHash|TS:${block.timestamp}")
@@ -65,11 +66,13 @@ object DBActor {
           writeResult match {
             case Success(_) =>
               ctx.log.info(s"DB: Block $currentId successfully saved.")
+              replyTo ! DB.Success //new Matias => we need to warn the validator that everything went well
               val newHash = block.toString
               behavior(newHash, currentId + 1)
 
             case Failure(exception) =>
               ctx.log.error(s"Critical I/O error writing block $currentId: ${exception.getMessage}")
+              replyTo ! DB.Failed(exception.getMessage) // we got to warn the validator the error
               Behaviors.same
           }
       

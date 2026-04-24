@@ -7,7 +7,7 @@ object DB {
   // --- DB Commands ---
   sealed trait Command
   case class AppendBlock(block: Block, replyTo: ActorRef[Response]) extends Command
-  case class SaveBlock(block: Block) extends Command // Fire-and-forget save (no reply)
+  case class SaveBlock(block: Block, replyTo: ActorRef[DB.Response]) extends Command // Fire-and-forget save (no reply)
   case class GetLastBlock(replyTo: ActorRef[LastBlockInfo]) extends Command
   case class GetBalanceAtDate(publicKey: String, targetTimestamp: Long, replyTo: ActorRef[BalanceResponse]) extends Command
 

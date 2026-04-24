@@ -92,6 +92,12 @@ object MempoolActor {
         // c'est le message reçu par la memepool de la part du validateur, en vue de récupérer les 2 premieres transactions pour constituer un bloc
         case Mempool.GetTxs(replyTo) =>
           // on sort les 2 premières tx
+          /**
+           * Sépare la collection `txs` en deux parties à l’index `2` :
+           * - la première partie contient les 2 premières transactions à envoyer ;
+           * - `rest` correspond au **reste des transactions**, c’est-à-dire toutes celles
+           *   qui n’ont pas été prises dans les 2 premières (éventuellement vide si `txs` a 2 éléments ou moins).
+           */
           val (toSend, rest) = txs.splitAt(2)
 
           if (toSend.nonEmpty) {
