@@ -10,24 +10,37 @@ object ValidatorActor {
 
   val DIFFICULTY = "caca"
 
-  def apply(mempool: ActorRef[Mempool.Command], db: ActorRef[DB.Command]): Behavior[Validator.Command] =
+  def apply(
+      mempool: ActorRef[Mempool.Command],
+      db: ActorRef[DB.Command]
+  ): Behavior[Validator.Command] =
     Behaviors.setup { ctx =>
       Behaviors.withTimers { timers =>
         timers.startTimerWithFixedDelay(Validator.StartMining, 5.seconds)
 
-        val txResponseAdapter = ctx.messageAdapter[Mempool.Txs](response => Validator.ProcessBlock(response.txs))
+        val txResponseAdapter = ctx.messageAdapter[Mempool.Txs](response =>
+          Validator.ProcessBlock(response.txs)
+        )
 
         val dbResponseAdapter = ctx.messageAdapter[DB.LastBlockInfo] {
-          case DB.LastBlockInfo(hash, id) => Validator.ProcessMining(hash.toString, id.toString.toInt)
+          case DB.LastBlockInfo(hash, id) =>
+            Validator.ProcessMining(hash.toString, id.toString.toInt)
         }
 
-        //new matias => nouvel adapter pour accepter les retours de la DB pour la création
+        // new matias => nouvel adapter pour accepter les retours de la DB pour la création
         val dbStatusAdapter = ctx.messageAdapter[DB.Response] {
-          case DB.Success => Validator.ConfirmSaved
+          case DB.Success     => Validator.ConfirmSaved
           case DB.Failed(err) => Validator.SaveFailed(err)
         }
 
-        behavior(mempool, db, txResponseAdapter, dbResponseAdapter, dbStatusAdapter, List.empty)
+        behavior(
+          mempool,
+          db,
+          txResponseAdapter,
+          dbResponseAdapter,
+          dbStatusAdapter,
+          List.empty
+        )
       }
     }
 
@@ -36,8 +49,8 @@ object ValidatorActor {
       db: ActorRef[DB.Command],
       txAdapter: ActorRef[Mempool.Txs],
       dbAdapter: ActorRef[DB.LastBlockInfo],
-      dbStatusAdapter: ActorRef[DB.Response], // Ajouté ici
-      pendingTxs: List[SignedTransaction]
+      dbStatusAdapter: ActorRef[DB.Response],
+      pendingTxs: List[PendingTx]
   ): Behavior[Validator.Command] =
     Behaviors.receive { (ctx, msg) =>
       msg match {
@@ -56,18 +69,29 @@ object ValidatorActor {
         case Validator.ProcessMining(lastHash, currentId) =>
           ctx.log.info(s"Validator : ⛏️ Minage...")
           val timestamp = System.currentTimeMillis()
-          val txsData = pendingTxs.map(_.txId).mkString("-")
-          val (nonce, blockHash) = functions.Miner.mine(txsData, lastHash, timestamp, 0, DIFFICULTY)
+          val txsData = pendingTxs.map(_.tx.txId).mkString("-")
+          val (nonce, blockHash) =
+            functions.Miner.mine(txsData, lastHash, timestamp, 0, DIFFICULTY)
 
-          //ctx.log.info(s"Validator : Bloc miné ! Envoi à la DB...")
-          ctx.log.info(s"Validator : ⛏️ BLOC MINÉ ! Nonce trouvé : $nonce | Hash : $blockHash")
-          val newBlock = Block(currentId, pendingTxs, lastHash, timestamp)
+          // ctx.log.info(s"Validator : Bloc miné ! Envoi à la DB...")
+          ctx.log.info(
+            s"Validator : ⛏️ BLOC MINÉ ! Nonce trouvé : $nonce | Hash : $blockHash"
+          )
+          val newBlock =
+            Block(currentId, pendingTxs.map(_.tx), lastHash, timestamp)
 
           // On passe l'adapter à la DB pour qu'elle puisse répondre
-          db ! DB.SaveBlock(newBlock, dbStatusAdapter) 
-          
+          db ! DB.SaveBlock(newBlock, dbStatusAdapter)
+
           // IMPORTANT : On change d'état vers l'attente
-          waitingForDbState(mempool, db, txAdapter, dbAdapter, dbStatusAdapter, pendingTxs)
+          waitingForDbState(
+            mempool,
+            db,
+            txAdapter,
+            dbAdapter,
+            dbStatusAdapter,
+            pendingTxs
+          )
 
         case _ => Behaviors.same
       }
@@ -79,18 +103,38 @@ object ValidatorActor {
       txAdapter: ActorRef[Mempool.Txs],
       dbAdapter: ActorRef[DB.LastBlockInfo],
       dbStatusAdapter: ActorRef[DB.Response],
-      pendingTxs: List[SignedTransaction]
+      pendingTxs: List[PendingTx]
   ): Behavior[Validator.Command] =
     Behaviors.receive { (ctx, msg) =>
       msg match {
         case Validator.ConfirmSaved =>
           ctx.log.info("Validator : Succès DB. Nettoyage mempool.")
-          mempool ! Mempool.RemoveTxs(pendingTxs)
-          behavior(mempool, db, txAdapter, dbAdapter, dbStatusAdapter, List.empty)
+
+          // send the final reply => mempool => wallet.createTx
+          pendingTxs.foreach(_.replyTo ! true)
+          mempool ! Mempool.RemoveTxs(pendingTxs.map(_.tx))
+          behavior(
+            mempool,
+            db,
+            txAdapter,
+            dbAdapter,
+            dbStatusAdapter,
+            List.empty
+          )
 
         case Validator.SaveFailed(err) =>
           ctx.log.error(s"Validator : Échec DB ($err).")
-          behavior(mempool, db, txAdapter, dbAdapter, dbStatusAdapter, List.empty)
+
+          // send the final reply => mempool => wallet.createTx
+          pendingTxs.foreach(_.replyTo ! false)
+          behavior(
+            mempool,
+            db,
+            txAdapter,
+            dbAdapter,
+            dbStatusAdapter,
+            List.empty
+          )
 
         case _ =>
           // On ignore les nouveaux StartMining tant qu'on n'a pas fini d'enregistrer

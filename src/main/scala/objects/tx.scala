@@ -1,6 +1,7 @@
 package objects
 
 import java.util.UUID
+import akka.actor.typed.ActorRef
 
 case class UnsignedTransaction(
     from: String, // public key of the sender
@@ -16,3 +17,6 @@ case class SignedTransaction(
     txId: String, // should be Crypto.hashTx(tx)
     signature: String
 )
+
+// each tx in the mempool is associated to a replyTo to confirm if it was accepted or not
+case class PendingTx(tx: SignedTransaction, replyTo: ActorRef[Boolean])

@@ -135,9 +135,9 @@ object WalletActor {
                 s"wallet ${state.name} : TX ${txHash} (${unsigned.nonce}) signed and sent to Mempool."
               )
               mempool ! Mempool.AddTx(
-                signed
+                signed,
+                replyTo
               ) // add signature AND tx data to mempool, contained in this variable
-              replyTo ! true // fixme : it should be waiting for mempool confirmation
 
               // update local state (balance and nonce) after sending the tx to mempool
               val newState = state.copy(

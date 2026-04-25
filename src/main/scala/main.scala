@@ -63,7 +63,8 @@ object Main {
         ctx.spawn(ValidatorActor(mempool, db), "validator")
 
         // 2. Wallets
-        val charlie = ctx.spawn(WalletActor("charlie", 300, mempool, db), "Charlie")
+        val charlie =
+          ctx.spawn(WalletActor("charlie", 300, mempool, db), "Charlie")
         val alice = ctx.spawn(WalletActor("alice", 500, mempool, db), "Alice")
 
         // 3. Receivers pour le monitoring
@@ -88,7 +89,12 @@ object Main {
           Behaviors.receiveMessage[String] { charliePubKey =>
             println("Alice initie 3 transactions vers Charlie...")
             alice ! Wallet.CreateTx(charliePubKey, 50, 3, genericResultReceiver)
-            alice ! Wallet.CreateTx(charliePubKey, 300, 2, genericResultReceiver)
+            alice ! Wallet.CreateTx(
+              charliePubKey,
+              300,
+              2,
+              genericResultReceiver
+            )
             alice ! Wallet.CreateTx(charliePubKey, 2, 4, genericResultReceiver)
             Behaviors.stopped
           }
@@ -98,13 +104,17 @@ object Main {
         // B. Charlie vers Alice (Les 2 nouvelles transactions)
         val alicePubKeyReceiver = ctx.spawnAnonymous(
           Behaviors.receiveMessage[String] { alicePubKey =>
-            // On attend un court instant ou on lance directement
             // Transaction 1 : Petit montant, frais normaux
             charlie ! Wallet.CreateTx(alicePubKey, 10, 1, genericResultReceiver)
 
             // Transaction 2 : Tentative d'envoyer plus que son solde initial (Test de sécurité)
             // Note : Charlie n'a que 50 au départ.
-            charlie ! Wallet.CreateTx(alicePubKey, 100, 5, genericResultReceiver)
+            charlie ! Wallet.CreateTx(
+              alicePubKey,
+              100,
+              5,
+              genericResultReceiver
+            )
             Behaviors.stopped
           }
         )
@@ -114,7 +124,6 @@ object Main {
 
         Behaviors.same
       },
-
 
       "blockchain-system"
     )

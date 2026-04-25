@@ -49,20 +49,19 @@ package actors
 import akka.actor.typed._
 import akka.actor.typed.scaladsl._
 import messages.Mempool
-import objects.SignedTransaction
 import functions.Crypto
+import objects.PendingTx
 
 object MempoolActor {
-
   def apply(): Behavior[Mempool.Command] = behavior(List.empty)
 
   private def behavior(
-      txs: List[SignedTransaction]
+      txs: List[PendingTx]
   ): Behavior[Mempool.Command] =
     Behaviors.receive { (ctx, msg) =>
       msg match {
 
-        case Mempool.AddTx(signedTx) =>
+        case Mempool.AddTx(signedTx, replyTo) =>
 
           val isValid = Crypto.verify(
             signedTx.tx,
@@ -77,15 +76,17 @@ object MempoolActor {
 
             // Simulation d'une Priority Queue : On ajoute et on trie par fees décroissants
             val updatedTxs =
-              (signedTx :: txs).sortBy(_.tx.fees)(Ordering[BigInt].reverse)
+              (PendingTx(signedTx, replyTo) :: txs)
+                .sortBy(_.tx.tx.fees)(Ordering[BigInt].reverse)
             ctx.log.info(
-              "liste mise à jour : " + updatedTxs.map(_.txId).mkString(", ")
+              "liste mise à jour : " + updatedTxs.map(_.tx.txId).mkString(", ")
             )
             behavior(updatedTxs)
           } else {
             ctx.log.error(
               s"Mempool : REJET ! Signature invalide pour TX ${signedTx.txId}."
             )
+            replyTo ! false
             Behaviors.same
           }
 
@@ -93,12 +94,14 @@ object MempoolActor {
         // La suppression réelle se fait uniquement via RemoveTxs après confirmation DB.
         case Mempool.GetTxs(replyTo) =>
           // on sort les 2 premières tx
-          /**
-           * Sépare la collection `txs` en deux parties à l’index `2` :
-           * - la première partie contient les 2 premières transactions à envoyer ;
-           * - `rest` correspond au **reste des transactions**, c’est-à-dire toutes celles
-           *   qui n’ont pas été prises dans les 2 premières (éventuellement vide si `txs` a 2 éléments ou moins).
-           */
+          /** Sépare la collection `txs` en deux parties à l’index `2` :
+            *   - la première partie contient les 2 premières transactions à
+            *     envoyer (each PendingTx also contains a replyto for
+            *     wallet.createTx);
+            *   - `rest` correspond au **reste des transactions**, c’est-à-dire
+            *     toutes celles qui n’ont pas été prises dans les 2 premières
+            *     (éventuellement vide si `txs` a 2 éléments ou moins).
+            */
           val (toSend, rest) = txs.splitAt(2)
 
           if (toSend.nonEmpty) {
@@ -116,13 +119,13 @@ object MempoolActor {
         case Mempool.RemoveTxs(confirmedTxs) =>
           // Ce message reste utile au cas où le Validator échoue et qu'on doive synchroniser
           val remaining =
-            txs.filterNot(t => confirmedTxs.exists(_.txId == t.txId))
+            txs.filterNot(t => confirmedTxs.exists(_.txId == t.tx.txId))
           ctx.log.info(
             s"Mempool : Nettoyage manuel demandé. Reste : ${remaining.size}"
           )
           ctx.log.info(
-              "liste mise à jour : " + remaining.map(_.txId).mkString(", ")
-            )
+            "liste mise à jour : " + remaining.map(_.tx.txId).mkString(", ")
+          )
           behavior(remaining)
       }
     }
