@@ -41,7 +41,7 @@ object DBActor {
               ctx.log.info(s"DB: Block $currentId successfully saved.")
               replyTo ! DB.Success
               
-              val newHash = block.toString
+              val newHash = functions.Crypto.sha256(block.toString)
               behavior(newHash, currentId + 1)
 
             case Failure(exception) =>
@@ -67,7 +67,7 @@ object DBActor {
             case Success(_) =>
               ctx.log.info(s"DB: Block $currentId successfully saved.")
               replyTo ! DB.Success //new Matias => we need to warn the validator that everything went well
-              val newHash = block.toString
+              val newHash = functions.Crypto.sha256(block.toString)
               behavior(newHash, currentId + 1)
 
             case Failure(exception) =>
