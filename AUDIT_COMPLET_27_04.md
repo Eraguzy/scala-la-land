@@ -25,7 +25,7 @@ src/main/scala/
 │   ├── blockchain.scala         ← DBActor (persistance fichier + supervision)
 │   ├── mempool.scala            ← MempoolActor (priority queue, vérif signature)
 │   ├── validator.scala          ← ValidatorActor (timer, minage PoW, orchestration)
-│   └── wallet.scala             ← WalletActor (file de tx, crypto, solde)
+│   └── wallet.scala             ← WalletActor (file de tx, crypto, solde, clés)
 ├── messages/
 │   ├── blockchain.scala         ← DB.Command / DB.Response
 │   ├── mempool.scala            ← Mempool.Command / Txs
@@ -43,26 +43,26 @@ src/main/scala/
 
 ### Acteurs et protocoles de messages
 
-**DBActor** (`actors/blockchain.scala` lignes 12–125)
+**DBActor** (`actors/blockchain.scala`)
 - Commandes reçues : `GetLastBlock`, `AppendBlock`, `SaveBlock`, `GetBalanceAtDate`
 - Supervision : `Behaviors.supervise(...).onFailure[Exception](SupervisorStrategy.resume)` (ligne 17)
 - État immuable géré par récursion (pattern fonctionnel Akka Typed)
 - Persistance : fichier texte `ledger.txt`, format `BLOCK|ID:...|PREV:...|TS:...` + `TX|from|to|amount`
 
-**MempoolActor** (`actors/mempool.scala` lignes 55–132)
+**MempoolActor** (`actors/mempool.scala`)
 - Commandes reçues : `AddTx`, `GetTxs`, `RemoveTxs`
 - Vérifie la signature RSA avant d'accepter (`Crypto.verify`, ligne 66–70)
 - Trie par fees décroissants (priority queue simulée par `.sortBy`, ligne 80)
 - Lot limité à 2 transactions par batch (`splitAt(2)`, ligne 105)
 
-**ValidatorActor** (`actors/validator.scala` lignes 9–144)
+**ValidatorActor** (`actors/validator.scala`)
 - Timer périodique de 5 secondes (`timers.startTimerWithFixedDelay(Validator.StartMining, 5.seconds)`, ligne 19)
 - Message adapters pour bridger les réponses Mempool et DB (lignes 21–33)
 - Deux états internes : `behavior` (actif) et `waitingForDbState` (attend confirmation)
 - Difficulté PoW fixée à `"caca"` (ligne 11) — intentionnellement triviale
 
-**WalletActor** (`actors/wallet.scala` lignes 9–195)
-- State immuable : `State(n, pubInt, privInt, initialBalance, name, nonce, txInProgress)`
+**WalletActor** (`actors/wallet.scala`)
+- State immuable : clés pub/priv, `initialBalance`, `nonce`...
 - File interne (`Vector[PendingTx]`) pour sérialiser les transactions concurrentes (lignes 83–95)
 - Vérifie le solde DB avant de signer (pattern `requestBalanceForTx` + `CreateTxInternal`)
 - Génère clés RSA 256 bits au démarrage via `Crypto.genWalletInts()`
