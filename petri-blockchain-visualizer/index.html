@@ -1,0 +1,1195 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Réseau de Pétri interactif — Blockchain Scala/Akka</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --panel2: #1f2937;
+      --line: #334155;
+      --text: #e5e7eb;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --ok: #22c55e;
+      --warn: #f59e0b;
+      --bad: #ef4444;
+      --place: #18213a;
+      --transition: #0b3b4d;
+      --token: #facc15;
+      --tokenText: #111827;
+      --lane: rgba(255,255,255,0.035);
+      --active: #fb923c;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .app {
+      height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      overflow: hidden;
+    }
+
+    header {
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(180deg, #111827, #0f172a);
+      padding: 12px 16px;
+    }
+
+    .title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 10px;
+    }
+
+    h1 {
+      font-size: 18px;
+      margin: 0;
+      font-weight: 750;
+      letter-spacing: .2px;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 3px;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    button, select, input[type="range"] {
+      border: 1px solid var(--line);
+      background: #0b1220;
+      color: var(--text);
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 13px;
+      outline: none;
+    }
+
+    button { cursor: pointer; }
+    button:hover, select:hover { border-color: var(--accent); }
+    button.primary { background: #0e7490; border-color: #0891b2; }
+    button.danger { background: #7f1d1d; border-color: #991b1b; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+
+    .main {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(1200px, 1fr) 400px;
+    }
+
+    .canvas-wrap {
+      position: relative;
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at top left, rgba(56, 189, 248, 0.08), transparent 34%),
+        radial-gradient(circle at bottom right, rgba(250, 204, 21, 0.07), transparent 30%),
+        #0b1020;
+    }
+
+    .svg-toolbar {
+      position: absolute;
+      left: 12px;
+      top: 12px;
+      z-index: 2;
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      max-width: calc(100% - 24px);
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid var(--line);
+      background: rgba(15, 23, 42, .8);
+      backdrop-filter: blur(6px);
+      border-radius: 999px;
+      padding: 6px 9px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+      user-select: none;
+    }
+
+    .lane-rect { fill: var(--lane); stroke: rgba(148, 163, 184, .14); stroke-width: 1; }
+    .lane-title { fill: #cbd5e1; font-size: 15px; font-weight: 800; letter-spacing: .5px; }
+    .lane-subtitle { fill: #64748b; font-size: 11px; }
+
+    .arc { stroke: #64748b; stroke-width: 2.2; fill: none; opacity: .86; }
+    .arc.active { stroke: var(--active); stroke-width: 3.2; opacity: 1; }
+    .arc.dashed { stroke-dasharray: 7 6; }
+
+    .place-node { fill: var(--place); stroke: #7dd3fc; stroke-width: 2; }
+    .place-node.has-token { stroke: var(--token); stroke-width: 3; filter: drop-shadow(0 0 10px rgba(250,204,21,.28)); }
+    .place-node.pending { stroke: #fb7185; }
+    .place-label { fill: #e5e7eb; font-size: 11px; font-weight: 650; text-anchor: middle; pointer-events: none; }
+    .place-id { fill: #94a3b8; font-size: 9px; text-anchor: middle; pointer-events: none; }
+
+    .trans-node { fill: var(--transition); stroke: #38bdf8; stroke-width: 2; rx: 4; }
+    .trans-node.enabled { stroke: #22c55e; filter: drop-shadow(0 0 8px rgba(34,197,94,.28)); }
+    .trans-node.last-fired { stroke: var(--active); stroke-width: 4; filter: drop-shadow(0 0 14px rgba(251,146,60,.42)); }
+    .trans-label { fill: #e0f2fe; font-size: 10px; font-weight: 800; text-anchor: middle; pointer-events: none; }
+    .trans-id { fill: #7dd3fc; font-size: 8.5px; text-anchor: middle; pointer-events: none; }
+
+    .token { fill: var(--token); stroke: rgba(255,255,255,.85); stroke-width: 1.3; filter: drop-shadow(0 2px 4px rgba(0,0,0,.35)); }
+    .token-label { fill: var(--tokenText); font-size: 8px; font-weight: 850; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+    .token-count { fill: #111827; font-size: 10px; font-weight: 900; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+
+    .side {
+      border-left: 1px solid var(--line);
+      background: var(--panel);
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+
+    .tabs {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .tab {
+      border: 0;
+      border-right: 1px solid var(--line);
+      border-radius: 0;
+      background: #0f172a;
+      color: var(--muted);
+      padding: 11px 6px;
+      font-size: 12px;
+    }
+    .tab.active { color: var(--text); background: #182032; }
+
+    .side-content {
+      min-height: 0;
+      overflow: auto;
+      padding: 14px;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      background: rgba(15, 23, 42, .68);
+      border-radius: 14px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+
+    .card h2, .card h3 {
+      margin: 0 0 8px;
+      font-size: 14px;
+    }
+
+    .card p {
+      margin: 6px 0;
+      color: var(--muted);
+      font-size: 12.5px;
+      line-height: 1.45;
+    }
+
+    .step-title {
+      font-weight: 800;
+      font-size: 14px;
+      margin-bottom: 4px;
+    }
+
+    .code-ref {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      color: #bae6fd;
+      background: #0b1220;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 7px 8px;
+      font-size: 11.5px;
+      overflow-wrap: anywhere;
+      margin-top: 8px;
+    }
+
+    .pill-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 4px 7px;
+      font-size: 11px;
+      color: var(--muted);
+      background: #0b1220;
+    }
+    .pill.ok { color: #bbf7d0; border-color: rgba(34,197,94,.45); }
+    .pill.warn { color: #fde68a; border-color: rgba(245,158,11,.45); }
+    .pill.bad { color: #fecaca; border-color: rgba(239,68,68,.45); }
+
+    .history-item {
+      display: grid;
+      grid-template-columns: 34px 1fr;
+      gap: 8px;
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(51,65,85,.65);
+      font-size: 12px;
+    }
+    .history-item:last-child { border-bottom: 0; }
+    .history-index { color: var(--muted); font-variant-numeric: tabular-nums; }
+    .history-name { font-weight: 750; }
+    .history-msg { color: var(--muted); margin-top: 3px; line-height: 1.35; }
+
+    .marking-list {
+      display: grid;
+      gap: 7px;
+    }
+    .marking-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: center;
+      border: 1px solid rgba(51,65,85,.72);
+      background: #0b1220;
+      border-radius: 10px;
+      padding: 7px 8px;
+      font-size: 12px;
+    }
+    .marking-place { font-weight: 750; }
+    .marking-tokens { color: var(--muted); font-size: 11px; margin-top: 3px; overflow-wrap: anywhere; }
+
+    .ltl-row {
+      border: 1px solid rgba(51,65,85,.72);
+      background: #0b1220;
+      border-radius: 12px;
+      padding: 10px;
+      margin-bottom: 9px;
+    }
+    .ltl-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+    .formula {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+      color: #e0f2fe;
+    }
+    .status {
+      border-radius: 999px;
+      padding: 3px 7px;
+      font-size: 10px;
+      font-weight: 900;
+      text-transform: uppercase;
+      border: 1px solid var(--line);
+      white-space: nowrap;
+    }
+    .status.ok { color: #bbf7d0; background: rgba(34,197,94,.12); border-color: rgba(34,197,94,.45); }
+    .status.pending { color: #fde68a; background: rgba(245,158,11,.12); border-color: rgba(245,158,11,.45); }
+    .status.bad { color: #fecaca; background: rgba(239,68,68,.12); border-color: rgba(239,68,68,.45); }
+    .status.na { color: #cbd5e1; background: rgba(148,163,184,.12); }
+
+    .small-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    .small-table th, .small-table td {
+      border-bottom: 1px solid rgba(51,65,85,.72);
+      text-align: left;
+      vertical-align: top;
+      padding: 7px 5px;
+    }
+    .small-table th { color: #cbd5e1; font-size: 11px; }
+    .small-table td { color: var(--muted); }
+
+    .tooltip {
+      position: absolute;
+      pointer-events: none;
+      z-index: 10;
+      max-width: 380px;
+      background: #020617;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      color: var(--text);
+      padding: 10px;
+      font-size: 12px;
+      box-shadow: 0 20px 50px rgba(0,0,0,.35);
+      display: none;
+    }
+    .tooltip b { color: #e0f2fe; }
+    .tooltip .muted { color: var(--muted); margin-top: 5px; line-height: 1.4; }
+
+    @media (max-width: 1050px) {
+      .main { grid-template-columns: 1fr; grid-template-rows: minmax(620px, 1fr) 500px; }
+      .side { border-left: 0; border-top: 1px solid var(--line); }
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="title-row">
+      <div>
+        <h1>Réseau de Pétri interactif — blockchain Scala/Akka</h1>
+        <div class="subtitle">Modèle fonctionnel aligné sur les acteurs Scala/Akka, avec abstraction explicite des valeurs métier et de la cardinalité exacte des transactions.</div>
+      </div>
+      <div class="badge" id="stepBadge">Étape 0 / 0</div>
+    </div>
+    <div class="controls">
+      <select id="scenarioSelect" title="Scénario simulé"></select>
+      <button id="resetBtn">Reset</button>
+      <button id="backBtn">← Reculer</button>
+      <button id="stepBtn" class="primary">Avancer →</button>
+      <button id="playBtn">Lecture auto</button>
+      <span class="badge">Vitesse <input id="speedRange" type="range" min="350" max="2200" value="950" step="50" /></span>
+      <button id="zoomOutBtn">−</button>
+      <button id="zoomInBtn">+</button>
+      <button id="fitBtn">Centrer</button>
+    </div>
+  </header>
+
+  <main class="main">
+    <section class="canvas-wrap" id="canvasWrap">
+      <div class="svg-toolbar">
+        <span class="badge"><span style="width:10px;height:10px;border-radius:50%;background:var(--token);display:inline-block"></span> token</span>
+        <span class="badge"><span style="width:18px;height:8px;border:2px solid #22c55e;display:inline-block"></span> transition activable</span>
+        <span class="badge"><span style="width:18px;height:8px;border:2px solid var(--active);display:inline-block"></span> dernière transition</span>
+      </div>
+      <svg id="petriSvg" viewBox="0 0 2850 2200" role="img" aria-label="Réseau de Pétri interactif"></svg>
+      <div class="tooltip" id="tooltip"></div>
+    </section>
+
+    <aside class="side">
+      <div class="tabs">
+        <button class="tab active" data-tab="state">État</button>
+        <button class="tab" data-tab="ltl">LTL</button>
+        <button class="tab" data-tab="deadlock">Deadlock</button>
+        <button class="tab" data-tab="mapping">Code</button>
+      </div>
+      <div class="side-content" id="sideContent"></div>
+    </aside>
+  </main>
+</div>
+
+<script>
+'use strict';
+
+const lanes = [
+  { id: 'API', label: 'HTTP API / Routes.scala', y: 40, h: 260, note: 'Entrées/sorties REST, ask pattern avec Timeout(30s)' },
+  { id: 'Registry', label: 'RegistryActor', y: 340, h: 210, note: 'Map name -> ActorRef[Wallet.Command]' },
+  { id: 'Wallet', label: 'WalletActor', y: 590, h: 390, note: 'Clés RSA, nonce, txInProgress, file interne' },
+  { id: 'DB', label: 'DBActor', y: 1020, h: 280, note: 'ledger.txt, lastHash, currentId, balances, blocks' },
+  { id: 'Mempool', label: 'MempoolActor', y: 1340, h: 280, note: 'Liste triée par fee décroissant, retrait seulement après confirmation' },
+  { id: 'Validator', label: 'ValidatorActor / Miner', y: 1660, h: 470, note: 'Timer 5s, pendingTxs, état waitingForDbState, PoW' }
+];
+
+const places = [
+  // API
+  {id:'P_API_READY', lane:'API', x:90, y:185, label:'API prête', desc:'Capacité externe à recevoir une requête HTTP.'},
+  {id:'P_API_CREATE_WALLET_REQ', lane:'API', x:600, y:150, label:'POST /wallets', desc:'Requête POST /api/wallets reçue.'},
+  {id:'P_API_TRANSFER_REQ', lane:'API', x:600, y:215, label:'POST /transfer', desc:'Requête POST /api/wallets/:name/transfer reçue.'},
+  {id:'P_API_READ_REQ', lane:'API', x:600, y:280, label:'GET lecture', desc:'Requête GET lecture: wallets, balance, pubkey, blockchain, mempool.'},
+  {id:'P_API_WAITING_TX_REPLY', lane:'API', x:1120, y:215, label:'API attend bool', desc:'La route transfer attend le Boolean envoyé au replyTo par Wallet/Mempool/Validator.' , pending:true},
+  {id:'P_API_TX_REPLY_READY', lane:'API', x:1970, y:215, label:'bool reçu', desc:'Le replyTo HTTP a reçu true/false; la route peut construire la réponse HTTP.' , pending:true},
+  {id:'P_API_SUCCESS', lane:'API', x:2410, y:125, label:'201 / true', desc:'Réponse HTTP positive: wallet créé ou transaction confirmée/minée.'},
+  {id:'P_API_REJECTED', lane:'API', x:2410, y:205, label:'erreur / false', desc:'Réponse HTTP négative: conflit, 404 ou transaction refusée.'},
+  {id:'P_API_VIEW_RESPONSE', lane:'API', x:2410, y:285, label:'réponse GET', desc:'Réponse de lecture: liste, solde, pubkey, blockchain ou mempool.'},
+
+  // Registry
+  {id:'P_REGISTRY_READY', lane:'Registry', x:90, y:455, label:'Registry prêt', desc:'RegistryActor avec sa Map de wallets.'},
+  {id:'P_REGISTRY_HAS_WALLET', lane:'Registry', x:650, y:415, label:'wallet connu', desc:'La Map contient le wallet demandé.'},
+  {id:'P_REGISTRY_NO_WALLET', lane:'Registry', x:650, y:505, label:'wallet absent', desc:'La Map ne contient pas le wallet demandé.'},
+  {id:'P_WALLET_REF_FOUND', lane:'Registry', x:1020, y:415, label:'WalletFound(ref)', desc:'Réponse Registry.WalletFound(ref).'},
+  {id:'P_WALLET_REF_NOT_FOUND', lane:'Registry', x:1020, y:505, label:'WalletNotFound', desc:'Réponse Registry.WalletNotFound.'},
+
+  // Wallet
+  {id:'P_WALLET_IDLE', lane:'Wallet', x:90, y:815, label:'Wallet idle', desc:'State.txInProgress = false.'},
+  {id:'P_WALLET_BUSY', lane:'Wallet', x:320, y:720, label:'txInProgress', desc:'State.txInProgress = true; le WalletActor traite une transaction.' , pending:true},
+  {id:'P_WALLET_QUEUE', lane:'Wallet', x:320, y:900, label:'pendingTxs', desc:'Vector[PendingTx] contient des demandes mises en attente.'},
+  {id:'P_WALLET_BALANCE_REQUEST', lane:'Wallet', x:670, y:815, label:'GetBalance', desc:'Wallet demande le solde à la DB avant de signer.' , pending:true},
+  {id:'P_BALANCE_RETURNED', lane:'Wallet', x:980, y:815, label:'balance reçue', desc:'DB.BalanceResponse convertie en BigInt puis renvoyée au Wallet.'},
+  {id:'P_UNSIGNED_TX', lane:'Wallet', x:1380, y:705, label:'UnsignedTx', desc:'UnsignedTransaction(from,to,amount,fees,nonce,timestamp) construite avant signature.'},
+  {id:'P_SIGNED_TX_SENT', lane:'Wallet', x:1710, y:815, label:'SignedTx envoyé', desc:'SignedTransaction(tx, txId, signature) envoyée à Mempool.AddTx.'},
+  {id:'P_TX_REJECTED_LOCAL', lane:'Wallet', x:1380, y:930, label:'refus local', desc:'Fonds insuffisants ou signature impossible côté wallet.'},
+
+  // DB
+  {id:'P_DB_LEDGER', lane:'DB', x:90, y:1160, label:'ledger + blocks', desc:'État DBActor: lastHash, currentId, List[BlockInfo], fichier ledger.txt.'},
+  {id:'P_DB_BALANCE_REQ', lane:'DB', x:670, y:1160, label:'GetBalanceAtDate', desc:'Lecture ledger.txt pour calculer le solde à timestamp donné pour un transfert.' , pending:true},
+  {id:'P_DB_BALANCE_VIEW_REQ', lane:'DB', x:980, y:1235, label:'balance GET', desc:'Requête DB.GetBalanceAtDate déclenchée par GET /balance.' , pending:true},
+  {id:'P_DB_LASTBLOCK_REQ', lane:'DB', x:1410, y:1100, label:'GetLastBlock', desc:'Le validator demande DB.LastBlockInfo(lastHash,currentId).' , pending:true},
+  {id:'P_LAST_BLOCK_INFO', lane:'DB', x:1710, y:1160, label:'LastBlockInfo', desc:'Dernier hash et id courant retournés au Validator.'},
+  {id:'P_DB_SAVE_IN_PROGRESS', lane:'DB', x:2140, y:1160, label:'SaveBlock', desc:'Écriture du bloc dans ledger.txt via DB.SaveBlock.' , pending:true},
+  {id:'P_BLOCK_PERSISTED', lane:'DB', x:2540, y:1080, label:'DB.Success', desc:'Bloc sauvegardé, lastHash/currentId/blocks mis à jour.'},
+  {id:'P_DB_SAVE_FAILED', lane:'DB', x:2540, y:1235, label:'DB.Failed', desc:'Échec I/O lors de SaveBlock; l’état DB reste identique.'},
+
+  // Mempool
+  {id:'P_MEMPOOL_EMPTY', lane:'Mempool', x:90, y:1485, label:'mempool vide', desc:'Liste txs vide.'},
+  {id:'P_MEMPOOL_ADD_REQ', lane:'Mempool', x:1710, y:1485, label:'AddTx', desc:'Mempool.AddTx(signedTx, replyTo).' , pending:true},
+  {id:'P_MEMPOOL_TX_PENDING', lane:'Mempool', x:2030, y:1410, label:'txs triées', desc:'Au moins une transaction est conservée en mempool, triée par fees décroissants.'},
+  {id:'P_MEMPOOL_BATCH_SENT', lane:'Mempool', x:1010, y:1445, label:'Txs(top 2)', desc:'Réponse Mempool.Txs; GetTxs ne retire pas les transactions.' , pending:true},
+  {id:'P_MEMPOOL_CLEANUP_REQ', lane:'Mempool', x:2440, y:1485, label:'RemoveTxs', desc:'Demande de suppression des tx confirmées seulement après DB.Success.' , pending:true},
+  {id:'P_MEMPOOL_CLEANED', lane:'Mempool', x:2680, y:1485, label:'nettoyée', desc:'Transactions confirmées retirées de la liste.'},
+  {id:'P_SIGNATURE_INVALID', lane:'Mempool', x:2030, y:1565, label:'sig invalide', desc:'Crypto.verify retourne false.'},
+
+  // Validator/Miner
+  {id:'P_VALIDATOR_IDLE', lane:'Validator', x:90, y:1910, label:'Validator idle', desc:'ValidatorActor en comportement normal.'},
+  {id:'P_VALIDATOR_POLLING', lane:'Validator', x:390, y:1910, label:'poll mempool', desc:'Timer StartMining déclenche Mempool.GetTxs.' , pending:true},
+  {id:'P_VALIDATOR_BATCH', lane:'Validator', x:1010, y:1910, label:'pendingTxs', desc:'Liste PendingTx mémorisée dans le behavior du Validator.' , pending:true},
+  {id:'P_MINING', lane:'Validator', x:1970, y:1910, label:'Miner.mine', desc:'Proof of Work récursif jusqu’à hash.startsWith("caca").' , pending:true},
+  {id:'P_BLOCK_MINED', lane:'Validator', x:2240, y:1910, label:'bloc miné', desc:'Block(currentId, pendingTxs.map(_.tx), lastHash, timestamp).' , pending:true},
+  {id:'P_VALIDATOR_WAITING_DB', lane:'Validator', x:2500, y:2045, label:'waiting DB', desc:'waitingForDbState: StartMining et autres messages sont ignorés.' , pending:true},
+  {id:'P_VALIDATOR_CONFIRM_TXS', lane:'Validator', x:2680, y:1830, label:'ConfirmSaved', desc:'Le Validator notifie chaque replyTo avec true et envoie RemoveTxs.'},
+  {id:'P_VALIDATOR_REJECT_TXS', lane:'Validator', x:2680, y:2045, label:'SaveFailed', desc:'Le Validator notifie chaque replyTo avec false; il ne retire pas la mempool.'},
+  {id:'P_IGNORED_TICK', lane:'Validator', x:2240, y:2045, label:'tick ignoré', desc:'StartMining reçu pendant waitingForDbState: Behaviors.same.'}
+];
+
+const transitions = [
+  // API route entry points
+  {id:'T_HTTP_CREATE_WALLET', lane:'API', x:300, y:150, label:'POST wallets', code:'Routes.scala: path("wallets") post -> Registry.CreateWallet', inputs:['P_API_READY'], outputs:[['P_API_READY','api'], ['P_API_CREATE_WALLET_REQ','req']], events:['createWalletReq'], desc:'Entrée HTTP de création de wallet.' , external:true},
+  {id:'T_HTTP_TRANSFER', lane:'API', x:300, y:215, label:'POST transfer', code:'Routes.scala: path("wallets" / Segment / "transfer") -> withWallet -> Wallet.CreateTx', inputs:['P_API_READY'], outputs:[['P_API_READY','api'], ['P_API_TRANSFER_REQ','req']], events:['transferReq'], desc:'Entrée HTTP de transfert.' , external:true},
+  {id:'T_HTTP_READ', lane:'API', x:300, y:280, label:'GET views', code:'Routes.scala: GET wallets/balance/pubkey/blockchain/mempool', inputs:['P_API_READY'], outputs:[['P_API_READY','api'], ['P_API_READ_REQ','get']], events:['readReq'], desc:'Entrée HTTP de lecture.' , external:true},
+  {id:'T_API_RETURN_SUCCESS', lane:'API', x:2210, y:125, label:'HTTP true', code:'Routes.scala: complete(TransferResponse(true, ...)) ou WalletResponse', inputs:['P_API_TX_REPLY_READY'], outputs:[['P_API_SUCCESS','200']], events:['apiSuccess'], desc:'La route HTTP reçoit true et répond succès.'},
+  {id:'T_API_RETURN_REJECTED', lane:'API', x:2210, y:205, label:'HTTP false', code:'Routes.scala: complete(TransferResponse(false, ...)) / 404 / 409', inputs:['P_API_TX_REPLY_READY'], outputs:[['P_API_REJECTED','err']], events:['apiRejected','txRejected'], desc:'La route HTTP reçoit false ou une erreur métier.'},
+
+  // Registry
+  {id:'T_REGISTRY_CREATE_WALLET_SUCCESS', lane:'Registry', x:460, y:415, label:'CreateWallet ok', code:'RegistryActor.scala: ctx.spawn(WalletActor(...)); WalletCreated(name); wallets + (name -> ref)', inputs:['P_API_CREATE_WALLET_REQ','P_REGISTRY_READY'], outputs:[['P_REGISTRY_READY','reg'], ['P_REGISTRY_HAS_WALLET','wallet'], ['P_WALLET_IDLE','wallet'], ['P_API_SUCCESS','201']], events:['walletCreated'], desc:'Wallet absent: création de l’acteur WalletActor et ajout dans la Map.'},
+  {id:'T_REGISTRY_CREATE_WALLET_EXISTS', lane:'Registry', x:460, y:505, label:'CreateWallet ko', code:'RegistryActor.scala: if (wallets.contains(name)) WalletAlreadyExists', inputs:['P_API_CREATE_WALLET_REQ','P_REGISTRY_READY','P_REGISTRY_HAS_WALLET'], outputs:[['P_REGISTRY_READY','reg'], ['P_REGISTRY_HAS_WALLET','wallet'], ['P_API_REJECTED','409']], events:['walletAlreadyExists'], desc:'Wallet déjà présent: réponse Conflict.'},
+  {id:'T_REGISTRY_GET_WALLET_FOUND', lane:'Registry', x:830, y:415, label:'GetWalletRef ok', code:'RegistryActor.scala: wallets.get(name) -> WalletFound(ref)', inputs:['P_API_TRANSFER_REQ','P_REGISTRY_HAS_WALLET'], outputs:[['P_REGISTRY_HAS_WALLET','wallet'], ['P_WALLET_REF_FOUND','ref']], events:['walletFound'], desc:'Résolution positive du wallet avant transfert.'},
+  {id:'T_REGISTRY_GET_WALLET_NOT_FOUND', lane:'Registry', x:830, y:505, label:'GetWalletRef ko', code:'RegistryActor.scala: None -> WalletNotFound', inputs:['P_API_TRANSFER_REQ','P_REGISTRY_NO_WALLET'], outputs:[['P_REGISTRY_NO_WALLET','none'], ['P_WALLET_REF_NOT_FOUND','404'], ['P_API_REJECTED','404']], events:['walletNotFound','apiRejected'], desc:'Wallet absent: la route répond NotFound.'},
+  {id:'T_REGISTRY_LIST_WALLETS', lane:'Registry', x:300, y:380, label:'ListWallets', code:'RegistryActor.scala: ListWallets -> WalletsListed(wallets.keys...)', inputs:['P_API_READ_REQ','P_REGISTRY_READY'], outputs:[['P_REGISTRY_READY','reg'], ['P_API_VIEW_RESPONSE','list']], events:['viewReturned'], desc:'Lecture de la liste des wallets.'},
+
+  // Wallet
+  {id:'T_WALLET_CREATE_TX_START', lane:'Wallet', x:200, y:815, label:'CreateTx', code:'WalletActor.scala: if (!txInProgress) requestBalanceForTx; txInProgress=true', inputs:['P_WALLET_REF_FOUND','P_WALLET_IDLE'], outputs:[['P_WALLET_BUSY','busy'], ['P_WALLET_BALANCE_REQUEST','bal'], ['P_API_WAITING_TX_REPLY','ask']], events:['txCreated'], desc:'Le WalletActor commence une transaction et conserve le replyTo HTTP en attente.'},
+  {id:'T_WALLET_CREATE_TX_QUEUED', lane:'Wallet', x:200, y:900, label:'queue tx', code:'WalletActor.scala: if (txInProgress) pendingTxs :+ request', inputs:['P_WALLET_BUSY'], outputs:[['P_WALLET_BUSY','busy'], ['P_WALLET_QUEUE','q']], events:['txQueued'], desc:'Une demande concurrente est ajoutée à pendingTxs.'},
+  {id:'T_WALLET_GET_BALANCE_REQUEST', lane:'Wallet', x:670, y:945, label:'ask balance', code:'WalletActor.scala: ctx.self ! Wallet.GetBalance(balanceReceiver)', inputs:['P_WALLET_BALANCE_REQUEST'], outputs:[['P_DB_BALANCE_REQ','bal?']], events:['balanceRequested'], desc:'Le Wallet s’envoie GetBalance, qui déclenche DB.GetBalanceAtDate.'},
+  {id:'T_DB_BALANCE_RESPONSE', lane:'DB', x:830, y:1160, label:'BalanceResponse', code:'DBActor.scala: GetBalanceAtDate -> BalanceResponse(balance)', inputs:['P_DB_BALANCE_REQ','P_DB_LEDGER'], outputs:[['P_DB_LEDGER','db'], ['P_BALANCE_RETURNED','bal']], events:['balanceReturned'], desc:'La DB calcule le solde depuis ledger.txt et répond au Wallet.'},
+  {id:'T_WALLET_FUNDS_OK_BUILD_UNSIGNED', lane:'Wallet', x:1180, y:750, label:'fonds ok', code:'WalletActor.scala: if (currentBalance >= amount + fee) create UnsignedTransaction', inputs:['P_WALLET_BUSY','P_BALANCE_RETURNED'], outputs:[['P_UNSIGNED_TX','uTx']], events:['fundsOk'], desc:'Fonds suffisants: construction de UnsignedTransaction avec nonce et timestamp.'},
+  {id:'T_WALLET_SIGN_SEND_MEMPOOL', lane:'Wallet', x:1510, y:815, label:'sign + AddTx', code:'WalletActor.scala: Crypto.hashTx; Crypto.sign; mempool ! Mempool.AddTx; nonce+1; initialBalance-=amount+fee', inputs:['P_UNSIGNED_TX'], outputs:[['P_SIGNED_TX_SENT','sTx'], ['P_WALLET_IDLE','idle']], events:['signed','addTxSent'], desc:'Signature RSA, envoi à la mempool et mise à jour locale du nonce/solde.'},
+  {id:'T_WALLET_FUNDS_INSUFFICIENT', lane:'Wallet', x:1180, y:930, label:'fonds ko', code:'WalletActor.scala: if (currentBalance < amount + fee) replyTo ! false; continueWithNextTx', inputs:['P_WALLET_BUSY','P_BALANCE_RETURNED','P_API_WAITING_TX_REPLY'], outputs:[['P_TX_REJECTED_LOCAL','funds'], ['P_WALLET_IDLE','idle'], ['P_API_TX_REPLY_READY','false']], events:['insufficientFunds','txRejected'], desc:'Fonds insuffisants: refus local, aucun AddTx, le replyTo HTTP reçoit false.'},
+  {id:'T_WALLET_CONTINUE_NEXT_TX', lane:'Wallet', x:500, y:900, label:'next queued', code:'WalletActor.scala: continueWithNextTx -> pendingTxs.headOption', inputs:['P_WALLET_IDLE','P_WALLET_QUEUE'], outputs:[['P_WALLET_BUSY','busy'], ['P_WALLET_BALANCE_REQUEST','bal']], events:['nextQueuedTx'], desc:'Après une transaction, le Wallet traite la suivante dans pendingTxs.'},
+  {id:'T_WALLET_GET_PUBKEY', lane:'Wallet', x:1110, y:945, label:'GetPublicKey', code:'WalletActor.scala: GetPublicKey -> walletPublicKey(state)', inputs:['P_API_READ_REQ','P_WALLET_IDLE'], outputs:[['P_WALLET_IDLE','idle'], ['P_API_VIEW_RESPONSE','pub']], events:['viewReturned'], desc:'Lecture de la clé publique.'},
+  {id:'T_WALLET_GET_BALANCE_VIEW', lane:'Wallet', x:980, y:945, label:'GET balance', code:'Routes.scala: GET /wallets/:name/balance -> Wallet.GetBalance -> DB.GetBalanceAtDate', inputs:['P_API_READ_REQ','P_WALLET_IDLE'], outputs:[['P_WALLET_IDLE','idle'], ['P_DB_BALANCE_VIEW_REQ','bal?']], events:['balanceViewRequested'], desc:'Route GET /balance autonome: le Wallet demande le solde à la DB sans créer de transaction.'},
+  {id:'T_DB_BALANCE_VIEW_RESPONSE', lane:'DB', x:1180, y:1235, label:'Balance GET ok', code:'WalletActor.scala: db adapter -> replyTo ! state.initialBalance + chainBalance; route -> BalanceResponse', inputs:['P_DB_BALANCE_VIEW_REQ','P_DB_LEDGER'], outputs:[['P_DB_LEDGER','db'], ['P_API_VIEW_RESPONSE','bal']], events:['viewReturned'], desc:'Réponse GET /balance: solde calculé et renvoyé à la route HTTP.'},
+
+  // Mempool
+  {id:'T_MEMPOOL_ADD_TX', lane:'Mempool', x:1870, y:1485, label:'AddTx reçu', code:'MempoolActor.scala: case Mempool.AddTx(signedTx, replyTo)', inputs:['P_SIGNED_TX_SENT'], outputs:[['P_MEMPOOL_ADD_REQ','add']], events:['addTxReceived'], desc:'La mempool reçoit une transaction signée.'},
+  {id:'T_MEMPOOL_VERIFY_OK_ADD_EMPTY', lane:'Mempool', x:1870, y:1370, label:'verify ok vide', code:'MempoolActor.scala: Crypto.verify=true; updated=(PendingTx :: txs).sortBy(fees). Si txs était vide, la mempool devient non vide.', inputs:['P_MEMPOOL_ADD_REQ','P_MEMPOOL_EMPTY'], outputs:[['P_MEMPOOL_TX_PENDING','tx']], events:['signatureValid','txInMempool'], desc:'Signature valide: ajout dans une mempool vide.'},
+  {id:'T_MEMPOOL_VERIFY_OK_ADD_NONEMPTY', lane:'Mempool', x:2090, y:1370, label:'verify ok +', code:'MempoolActor.scala: Crypto.verify=true; ajout possible même si txs contient déjà des transactions.', inputs:['P_MEMPOOL_ADD_REQ','P_MEMPOOL_TX_PENDING'], outputs:[['P_MEMPOOL_TX_PENDING','tx+']], events:['signatureValid','txInMempool'], desc:'Signature valide: ajout dans une mempool déjà non vide; l’état reste non vide.'},
+  {id:'T_MEMPOOL_VERIFY_INVALID', lane:'Mempool', x:1870, y:1565, label:'verify ko', code:'MempoolActor.scala: Crypto.verify(...)=false; replyTo ! false; txs inchangé', inputs:['P_MEMPOOL_ADD_REQ','P_API_WAITING_TX_REPLY'], outputs:[['P_SIGNATURE_INVALID','sig'], ['P_API_TX_REPLY_READY','false']], events:['signatureInvalid','txRejected'], desc:'Signature invalide: refus immédiat au replyTo; la mempool existante n’est pas modifiée.'},
+  {id:'T_MEMPOOL_VIEW_PENDING', lane:'Mempool', x:2240, y:1565, label:'ViewPending', code:'MempoolActor.scala: ViewPending -> PendingView(infos)', inputs:['P_API_READ_REQ'], outputs:[['P_API_VIEW_RESPONSE','view']], events:['viewReturned'], desc:'Lecture non destructive de la mempool.'},
+
+  // Validator and DB save path
+  {id:'T_VALIDATOR_START_MINING', lane:'Validator', x:240, y:1910, label:'StartMining', code:'ValidatorActor.scala: timers.startTimerWithFixedDelay(StartMining, 5.seconds); mempool ! GetTxs', inputs:['P_VALIDATOR_IDLE'], outputs:[['P_VALIDATOR_POLLING','poll']], events:['startMining'], desc:'Tick du timer: le Validator interroge la mempool.'},
+  {id:'T_MEMPOOL_GET_TXS_NONEMPTY', lane:'Mempool', x:720, y:1445, label:'GetTxs non vide', code:'MempoolActor.scala: val (toSend, _) = txs.splitAt(2); replyTo ! Txs(toSend)', inputs:['P_VALIDATOR_POLLING','P_MEMPOOL_TX_PENDING'], outputs:[['P_MEMPOOL_TX_PENDING','tx'], ['P_MEMPOOL_BATCH_SENT','top2'], ['P_VALIDATOR_BATCH','batch']], events:['batchSelected'], desc:'La mempool envoie jusqu’à deux transactions sans les retirer.'},
+  {id:'T_MEMPOOL_GET_TXS_EMPTY', lane:'Mempool', x:720, y:1545, label:'GetTxs vide', code:'MempoolActor.scala: replyTo ! Mempool.Txs(List.empty); Validator.ProcessBlock(empty) -> Behaviors.same', inputs:['P_VALIDATOR_POLLING','P_MEMPOOL_EMPTY'], outputs:[['P_MEMPOOL_EMPTY','empty'], ['P_VALIDATOR_IDLE','idle']], events:['mempoolEmpty'], desc:'Mempool vide: le Validator ne change pas d’état.'},
+  {id:'T_DB_GET_LAST_BLOCK_REQUEST', lane:'DB', x:1320, y:1160, label:'ask LastBlock', code:'ValidatorActor.scala: ProcessBlock(nonEmpty) -> db ! DB.GetLastBlock(dbAdapter)', inputs:['P_VALIDATOR_BATCH','P_MEMPOOL_BATCH_SENT'], outputs:[['P_VALIDATOR_BATCH','batch'], ['P_DB_LASTBLOCK_REQ','last?']], events:['lastBlockRequested'], desc:'Le Validator demande le dernier hash/id pour construire le bloc.'},
+  {id:'T_DB_GET_LAST_BLOCK_RESPONSE', lane:'DB', x:1510, y:1160, label:'LastBlockInfo', code:'DBActor.scala: GetLastBlock -> LastBlockInfo(lastHash,currentId)', inputs:['P_DB_LASTBLOCK_REQ','P_DB_LEDGER'], outputs:[['P_DB_LEDGER','db'], ['P_LAST_BLOCK_INFO','last']], events:['lastBlockReturned'], desc:'La DB renvoie le dernier hash et l’id courant.'},
+  {id:'T_MINER_START', lane:'Validator', x:1740, y:1910, label:'start mine', code:'ValidatorActor.scala: DB.LastBlockInfo reçu; préparation des données txsData et appel Miner.mine(...)', inputs:['P_LAST_BLOCK_INFO','P_VALIDATOR_BATCH'], outputs:[['P_MINING','pow']], events:['miningStarted'], desc:'Début du calcul Proof of Work avec les transactions sélectionnées.'},
+  {id:'T_MINER_PROOF_OF_WORK', lane:'Validator', x:1970, y:1910, label:'mine()', code:'functions.Miner.mine(txsData,lastHash,timestamp,0,DIFFICULTY="caca")', inputs:['P_MINING'], outputs:[['P_BLOCK_MINED','block']], events:['blockMined'], desc:'Calcul PoW récursif jusqu’à obtenir un hash commençant par caca.'},
+  {id:'T_DB_SAVE_BLOCK_REQUEST', lane:'DB', x:2140, y:1325, label:'SaveBlock', code:'ValidatorActor.scala: db ! DB.SaveBlock(newBlock, dbStatusAdapter); waitingForDbState(...)', inputs:['P_BLOCK_MINED'], outputs:[['P_DB_SAVE_IN_PROGRESS','save'], ['P_VALIDATOR_WAITING_DB','wait']], events:['dbSaveRequested','validatorWaitingDb'], desc:'Après minage, le bloc est envoyé à la DB et le validator passe en état waitingForDbState.'},
+  {id:'T_DB_SAVE_SUCCESS', lane:'DB', x:2340, y:1080, label:'DB.Success', code:'DBActor.scala: Success(_) -> replyTo ! DB.Success; lastHash=current sha256(block.toString); currentId+1', inputs:['P_DB_SAVE_IN_PROGRESS','P_DB_LEDGER','P_VALIDATOR_WAITING_DB'], outputs:[['P_DB_LEDGER','db+'], ['P_BLOCK_PERSISTED','ok'], ['P_VALIDATOR_CONFIRM_TXS','ok']], events:['dbSaved'], desc:'Écriture réussie: DB.Success, mise à jour du hash/id et stockage BlockInfo.'},
+  {id:'T_DB_SAVE_FAILED', lane:'DB', x:2340, y:1235, label:'DB.Failed', code:'DBActor.scala: Failure(exception) -> replyTo ! DB.Failed; Behaviors.same', inputs:['P_DB_SAVE_IN_PROGRESS','P_DB_LEDGER','P_VALIDATOR_WAITING_DB'], outputs:[['P_DB_LEDGER','db'], ['P_DB_SAVE_FAILED','ko'], ['P_VALIDATOR_REJECT_TXS','ko']], events:['dbFailed'], desc:'Échec d’écriture: la DB garde son ancien état.'},
+  {id:'T_VALIDATOR_CONFIRM_SAVED', lane:'Validator', x:2560, y:1830, label:'ConfirmSaved', code:'ValidatorActor.scala: pendingTxs.foreach(_.replyTo ! true); mempool ! RemoveTxs(...); behavior(...,List.empty)', inputs:['P_BLOCK_PERSISTED','P_VALIDATOR_CONFIRM_TXS','P_API_WAITING_TX_REPLY'], outputs:[['P_MEMPOOL_CLEANUP_REQ','rm'], ['P_API_TX_REPLY_READY','true'], ['P_VALIDATOR_IDLE','idle']], events:['txAccepted','removeRequested'], desc:'Le Validator confirme les transactions aux replyTo puis demande le nettoyage mempool.'},
+  {id:'T_VALIDATOR_SAVE_FAILED', lane:'Validator', x:2560, y:2045, label:'SaveFailed', code:'ValidatorActor.scala: pendingTxs.foreach(_.replyTo ! false); behavior(..., List.empty)', inputs:['P_DB_SAVE_FAILED','P_VALIDATOR_REJECT_TXS','P_API_WAITING_TX_REPLY'], outputs:[['P_API_TX_REPLY_READY','false'], ['P_VALIDATOR_IDLE','idle']], events:['txRejected'], desc:'Le Validator rejette les transactions mais ne déclenche pas RemoveTxs: elles restent dans la mempool.'},
+  {id:'T_MEMPOOL_REMOVE_CONFIRMED_ALL', lane:'Mempool', x:2560, y:1445, label:'Remove all', code:'MempoolActor.scala: txs.filterNot(...). Résultat vide si toutes les transactions confirmées ont été retirées.', inputs:['P_MEMPOOL_CLEANUP_REQ','P_MEMPOOL_TX_PENDING'], outputs:[['P_MEMPOOL_CLEANED','clean'], ['P_MEMPOOL_EMPTY','empty']], events:['mempoolCleaned'], desc:'Nettoyage après DB.Success quand toutes les transactions restantes sont supprimées.'},
+  {id:'T_MEMPOOL_REMOVE_CONFIRMED_PARTIAL', lane:'Mempool', x:2560, y:1545, label:'Remove partiel', code:'MempoolActor.scala: txs.filterNot(...). Des transactions non confirmées peuvent rester dans txs.', inputs:['P_MEMPOOL_CLEANUP_REQ','P_MEMPOOL_TX_PENDING'], outputs:[['P_MEMPOOL_CLEANED','clean'], ['P_MEMPOOL_TX_PENDING','rest']], events:['mempoolCleaned','mempoolStillNonEmpty'], desc:'Nettoyage après DB.Success quand il reste au moins une transaction non confirmée.'},
+  {id:'T_VALIDATOR_TICK_IGNORED', lane:'Validator', x:2370, y:2045, label:'tick ignoré', code:'ValidatorActor.scala waitingForDbState: case _ => Behaviors.same', inputs:['P_VALIDATOR_WAITING_DB'], outputs:[['P_VALIDATOR_WAITING_DB','wait'], ['P_IGNORED_TICK','tick']], events:['tickIgnored'], desc:'Un StartMining reçu pendant l’attente DB est ignoré.'},
+
+  // DB/read-only views
+  {id:'T_DB_GET_BLOCKCHAIN', lane:'DB', x:2570, y:1160, label:'GetAllBlocks', code:'DBActor.scala: GetAllBlocks -> BlocksData(blocks)', inputs:['P_API_READ_REQ','P_DB_LEDGER'], outputs:[['P_DB_LEDGER','db'], ['P_API_VIEW_RESPONSE','chain']], events:['viewReturned'], desc:'Lecture de la blockchain enregistrée en mémoire.'}
+];
+
+const scenarios = [
+  {
+    id:'transfer_success',
+    name:'Transfert réussi : API → Wallet → Mempool → Validator → DB.Success → RemoveTxs',
+    description:'Chemin nominal complet du code actuel. La mempool ne supprime les transactions qu’après DB.Success.',
+    initial:['P_API_READY','P_REGISTRY_READY','P_REGISTRY_HAS_WALLET','P_WALLET_IDLE','P_DB_LEDGER','P_MEMPOOL_EMPTY','P_VALIDATOR_IDLE'],
+    sequence:['T_HTTP_TRANSFER','T_REGISTRY_GET_WALLET_FOUND','T_WALLET_CREATE_TX_START','T_WALLET_GET_BALANCE_REQUEST','T_DB_BALANCE_RESPONSE','T_WALLET_FUNDS_OK_BUILD_UNSIGNED','T_WALLET_SIGN_SEND_MEMPOOL','T_MEMPOOL_ADD_TX','T_MEMPOOL_VERIFY_OK_ADD_EMPTY','T_VALIDATOR_START_MINING','T_MEMPOOL_GET_TXS_NONEMPTY','T_DB_GET_LAST_BLOCK_REQUEST','T_DB_GET_LAST_BLOCK_RESPONSE','T_MINER_START','T_MINER_PROOF_OF_WORK','T_DB_SAVE_BLOCK_REQUEST','T_DB_SAVE_SUCCESS','T_VALIDATOR_CONFIRM_SAVED','T_MEMPOOL_REMOVE_CONFIRMED_ALL','T_API_RETURN_SUCCESS']
+  },
+  {
+    id:'transfer_success_mempool_nonempty',
+    name:'Transfert réussi avec mempool déjà non vide',
+    description:'Cas que le code autorise: AddTx ajoute et trie même si txs contient déjà des transactions; RemoveTxs peut laisser un reste.',
+    initial:['P_API_READY','P_REGISTRY_READY','P_REGISTRY_HAS_WALLET','P_WALLET_IDLE','P_DB_LEDGER','P_MEMPOOL_TX_PENDING','P_VALIDATOR_IDLE'],
+    sequence:['T_HTTP_TRANSFER','T_REGISTRY_GET_WALLET_FOUND','T_WALLET_CREATE_TX_START','T_WALLET_GET_BALANCE_REQUEST','T_DB_BALANCE_RESPONSE','T_WALLET_FUNDS_OK_BUILD_UNSIGNED','T_WALLET_SIGN_SEND_MEMPOOL','T_MEMPOOL_ADD_TX','T_MEMPOOL_VERIFY_OK_ADD_NONEMPTY','T_VALIDATOR_START_MINING','T_MEMPOOL_GET_TXS_NONEMPTY','T_DB_GET_LAST_BLOCK_REQUEST','T_DB_GET_LAST_BLOCK_RESPONSE','T_MINER_START','T_MINER_PROOF_OF_WORK','T_DB_SAVE_BLOCK_REQUEST','T_DB_SAVE_SUCCESS','T_VALIDATOR_CONFIRM_SAVED','T_MEMPOOL_REMOVE_CONFIRMED_PARTIAL','T_API_RETURN_SUCCESS']
+  },
+  {
+    id:'db_failure_retry_possible',
+    name:'Échec DB : transaction rejetée côté API mais reste en mempool',
+    description:'Branche SaveFailed fidèle au code: replyTo false, pas de RemoveTxs; la transaction reste disponible pour un tick ultérieur.',
+    initial:['P_API_READY','P_REGISTRY_READY','P_REGISTRY_HAS_WALLET','P_WALLET_IDLE','P_DB_LEDGER','P_MEMPOOL_EMPTY','P_VALIDATOR_IDLE'],
+    sequence:['T_HTTP_TRANSFER','T_REGISTRY_GET_WALLET_FOUND','T_WALLET_CREATE_TX_START','T_WALLET_GET_BALANCE_REQUEST','T_DB_BALANCE_RESPONSE','T_WALLET_FUNDS_OK_BUILD_UNSIGNED','T_WALLET_SIGN_SEND_MEMPOOL','T_MEMPOOL_ADD_TX','T_MEMPOOL_VERIFY_OK_ADD_EMPTY','T_VALIDATOR_START_MINING','T_MEMPOOL_GET_TXS_NONEMPTY','T_DB_GET_LAST_BLOCK_REQUEST','T_DB_GET_LAST_BLOCK_RESPONSE','T_MINER_START','T_MINER_PROOF_OF_WORK','T_DB_SAVE_BLOCK_REQUEST','T_DB_SAVE_FAILED','T_VALIDATOR_SAVE_FAILED','T_API_RETURN_REJECTED']
+  },
+  {
+    id:'insufficient_funds',
+    name:'Fonds insuffisants : refus local WalletActor',
+    description:'Le Wallet refuse avant signature et avant Mempool.AddTx.',
+    initial:['P_API_READY','P_REGISTRY_READY','P_REGISTRY_HAS_WALLET','P_WALLET_IDLE','P_DB_LEDGER','P_MEMPOOL_EMPTY','P_VALIDATOR_IDLE'],
+    sequence:['T_HTTP_TRANSFER','T_REGISTRY_GET_WALLET_FOUND','T_WALLET_CREATE_TX_START','T_WALLET_GET_BALANCE_REQUEST','T_DB_BALANCE_RESPONSE','T_WALLET_FUNDS_INSUFFICIENT','T_API_RETURN_REJECTED']
+  },
+  {
+    id:'wallet_not_found',
+    name:'Wallet introuvable : Registry.WalletNotFound → HTTP 404',
+    description:'Branche withWallet négative.',
+    initial:['P_API_READY','P_REGISTRY_READY','P_REGISTRY_NO_WALLET','P_DB_LEDGER','P_MEMPOOL_EMPTY','P_VALIDATOR_IDLE'],
+    sequence:['T_HTTP_TRANSFER','T_REGISTRY_GET_WALLET_NOT_FOUND']
+  },
+  {
+    id:'create_wallet_success',
+    name:'Création wallet réussie',
+    description:'Registry spawn un WalletActor avec clés RSA générées dans WalletActor.apply.',
+    initial:['P_API_READY','P_REGISTRY_READY','P_DB_LEDGER','P_MEMPOOL_EMPTY','P_VALIDATOR_IDLE'],
+    sequence:['T_HTTP_CREATE_WALLET','T_REGISTRY_CREATE_WALLET_SUCCESS']
+  },
+  {
+    id:'create_wallet_exists',
+    name:'Création wallet déjà existant',
+    description:'Registry répond WalletAlreadyExists sans créer d’acteur.',
+    initial:['P_API_READY','P_REGISTRY_READY','P_REGISTRY_HAS_WALLET','P_WALLET_IDLE','P_DB_LEDGER','P_MEMPOOL_EMPTY','P_VALIDATOR_IDLE'],
+    sequence:['T_HTTP_CREATE_WALLET','T_REGISTRY_CREATE_WALLET_EXISTS']
+  },
+  {
+    id:'mempool_empty_tick',
+    name:'Tick de minage avec mempool vide',
+    description:'StartMining déclenche GetTxs; Txs(List.empty) ne modifie pas le Validator.',
+    initial:['P_API_READY','P_REGISTRY_READY','P_DB_LEDGER','P_MEMPOOL_EMPTY','P_VALIDATOR_IDLE'],
+    sequence:['T_VALIDATOR_START_MINING','T_MEMPOOL_GET_TXS_EMPTY']
+  },
+  {
+    id:'tick_ignored_waiting_db',
+    name:'Tick ignoré pendant waitingForDbState',
+    description:'Le Validator ignore les nouveaux StartMining tant que la DB n’a pas répondu.',
+    initial:['P_API_READY','P_REGISTRY_READY','P_REGISTRY_HAS_WALLET','P_WALLET_IDLE','P_DB_LEDGER','P_MEMPOOL_EMPTY','P_VALIDATOR_IDLE'],
+    sequence:['T_HTTP_TRANSFER','T_REGISTRY_GET_WALLET_FOUND','T_WALLET_CREATE_TX_START','T_WALLET_GET_BALANCE_REQUEST','T_DB_BALANCE_RESPONSE','T_WALLET_FUNDS_OK_BUILD_UNSIGNED','T_WALLET_SIGN_SEND_MEMPOOL','T_MEMPOOL_ADD_TX','T_MEMPOOL_VERIFY_OK_ADD_EMPTY','T_VALIDATOR_START_MINING','T_MEMPOOL_GET_TXS_NONEMPTY','T_DB_GET_LAST_BLOCK_REQUEST','T_DB_GET_LAST_BLOCK_RESPONSE','T_MINER_START','T_MINER_PROOF_OF_WORK','T_DB_SAVE_BLOCK_REQUEST','T_VALIDATOR_TICK_IGNORED','T_DB_SAVE_SUCCESS','T_VALIDATOR_CONFIRM_SAVED','T_MEMPOOL_REMOVE_CONFIRMED_ALL','T_API_RETURN_SUCCESS']
+  },
+  {
+    id:'invalid_signature_actor_branch',
+    name:'Signature invalide : branche Mempool.AddTx',
+    description:'Branche présente dans MempoolActor. Elle suppose une transaction corrompue ou injectée au niveau acteur, car l’API publique ne fournit pas AddTx directement.',
+    initial:['P_API_READY','P_REGISTRY_READY','P_DB_LEDGER','P_MEMPOOL_EMPTY','P_VALIDATOR_IDLE','P_MEMPOOL_ADD_REQ','P_API_WAITING_TX_REPLY'],
+    sequence:['T_MEMPOOL_VERIFY_INVALID','T_API_RETURN_REJECTED']
+  },
+  {
+    id:'read_views',
+    name:'Routes GET : wallets / balance / pubkey / blockchain / mempool',
+    description:'Scénario de lecture non destructif, incluant maintenant GET /balance.',
+    initial:['P_API_READY','P_REGISTRY_READY','P_REGISTRY_HAS_WALLET','P_WALLET_IDLE','P_DB_LEDGER','P_MEMPOOL_TX_PENDING','P_VALIDATOR_IDLE'],
+    sequence:['T_HTTP_READ','T_REGISTRY_LIST_WALLETS','T_HTTP_READ','T_WALLET_GET_BALANCE_VIEW','T_DB_BALANCE_VIEW_RESPONSE','T_HTTP_READ','T_WALLET_GET_PUBKEY','T_HTTP_READ','T_DB_GET_BLOCKCHAIN','T_HTTP_READ','T_MEMPOOL_VIEW_PENDING']
+  }
+];
+
+const placeById = Object.fromEntries(places.map(p => [p.id, p]));
+const transById = Object.fromEntries(transitions.map(t => [t.id, t]));
+let scenario = scenarios[0];
+let marking = {};
+let history = [];
+let snapshots = [];
+let isPlaying = false;
+let timer = null;
+let lastFired = null;
+let currentTab = 'state';
+const CANVAS = {w:2850, h:2200};
+let viewBox = {x:0, y:0, w:CANVAS.w, h:CANVAS.h};
+let tokenSeq = 1;
+
+const svg = document.getElementById('petriSvg');
+const sideContent = document.getElementById('sideContent');
+const tooltip = document.getElementById('tooltip');
+
+function cloneMarking(m) {
+  return JSON.parse(JSON.stringify(m));
+}
+
+function addToken(pid, label) {
+  if (!marking[pid]) marking[pid] = [];
+  marking[pid].push({ id: 'k' + (tokenSeq++), label: label || '•' });
+}
+
+function removeToken(pid) {
+  if (!marking[pid] || marking[pid].length === 0) return null;
+  return marking[pid].shift();
+}
+
+function hasToken(pid) {
+  return Boolean(marking[pid] && marking[pid].length > 0);
+}
+
+function isEnabled(t) {
+  return t.inputs.every(hasToken);
+}
+
+function enabledTransitions({includeExternal = true} = {}) {
+  return transitions.filter(t => (includeExternal || !t.external) && isEnabled(t));
+}
+
+function reset() {
+  stopAuto();
+  marking = {};
+  history = [];
+  snapshots = [];
+  lastFired = null;
+  tokenSeq = 1;
+  scenario.initial.forEach(pid => addToken(pid, initialTokenLabel(pid)));
+  snapshots.push({marking: cloneMarking(marking), history: [], lastFired: null, tokenSeq});
+  renderAll();
+}
+
+function initialTokenLabel(pid) {
+  if (pid.includes('API')) return 'api';
+  if (pid.includes('REGISTRY')) return 'reg';
+  if (pid.includes('WALLET')) return 'w';
+  if (pid.includes('DB')) return 'db';
+  if (pid.includes('MEMPOOL')) return 'm';
+  if (pid.includes('VALIDATOR')) return 'v';
+  return '•';
+}
+
+function fireTransition(tid, {manual = false} = {}) {
+  const t = transById[tid];
+  if (!t) return false;
+  if (!isEnabled(t)) {
+    if (manual) flashMessage(`Transition non activable: ${tid}`);
+    return false;
+  }
+  t.inputs.forEach(removeToken);
+  t.outputs.forEach(([pid, label]) => addToken(pid, label));
+  lastFired = tid;
+  history.push({ transitionId: tid, events: t.events || [], timestamp: Date.now() });
+  snapshots.push({marking: cloneMarking(marking), history: JSON.parse(JSON.stringify(history)), lastFired, tokenSeq});
+  renderAll();
+  return true;
+}
+
+function nextTransitionId() {
+  if (history.length >= scenario.sequence.length) return null;
+  return scenario.sequence[history.length];
+}
+
+function stepForward() {
+  const next = nextTransitionId();
+  if (!next) {
+    stopAuto();
+    return false;
+  }
+  const ok = fireTransition(next, {manual:true});
+  if (!ok) stopAuto();
+  return ok;
+}
+
+function stepBack() {
+  if (snapshots.length <= 1) return;
+  snapshots.pop();
+  const snap = snapshots[snapshots.length - 1];
+  marking = cloneMarking(snap.marking);
+  history = JSON.parse(JSON.stringify(snap.history));
+  lastFired = snap.lastFired;
+  tokenSeq = snap.tokenSeq;
+  renderAll();
+}
+
+function playAuto() {
+  if (isPlaying) return;
+  isPlaying = true;
+  document.getElementById('playBtn').textContent = 'Pause';
+  const tick = () => {
+    if (!stepForward()) stopAuto();
+  };
+  timer = setInterval(tick, Number(document.getElementById('speedRange').value));
+}
+
+function stopAuto() {
+  isPlaying = false;
+  if (timer) clearInterval(timer);
+  timer = null;
+  document.getElementById('playBtn').textContent = 'Lecture auto';
+}
+
+function toggleAuto() {
+  isPlaying ? stopAuto() : playAuto();
+}
+
+function makeEl(name, attrs = {}, parent = svg) {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', name);
+  Object.entries(attrs).forEach(([k, v]) => el.setAttribute(k, String(v)));
+  parent.appendChild(el);
+  return el;
+}
+
+function renderSvg() {
+  svg.innerHTML = '';
+  svg.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`);
+
+  const defs = makeEl('defs');
+  const marker = makeEl('marker', { id:'arrow', viewBox:'0 0 10 10', refX:'9', refY:'5', markerWidth:'7', markerHeight:'7', orient:'auto-start-reverse' }, defs);
+  makeEl('path', { d:'M 0 0 L 10 5 L 0 10 z', fill:'#64748b' }, marker);
+  const markerActive = makeEl('marker', { id:'arrowActive', viewBox:'0 0 10 10', refX:'9', refY:'5', markerWidth:'8', markerHeight:'8', orient:'auto-start-reverse' }, defs);
+  makeEl('path', { d:'M 0 0 L 10 5 L 0 10 z', fill:'#fb923c' }, markerActive);
+
+  lanes.forEach(l => {
+    makeEl('rect', {x:20, y:l.y, width:CANVAS.w - 40, height:l.h, rx:20, class:'lane-rect'});
+    makeEl('text', {x:38, y:l.y+25, class:'lane-title'}).textContent = l.label;
+    makeEl('text', {x:38, y:l.y+43, class:'lane-subtitle'}).textContent = l.note;
+  });
+
+  // arcs below nodes
+  transitions.forEach(t => {
+    t.inputs.forEach(pid => drawArc(placeById[pid], t, 'in'));
+    t.outputs.forEach(([pid]) => drawArc(t, placeById[pid], 'out'));
+  });
+
+  places.forEach(drawPlace);
+  transitions.forEach(drawTransition);
+}
+
+function nodeCenter(n) {
+  return {x:n.x, y:n.y};
+}
+
+function drawArc(a, b, dir) {
+  const ac = nodeCenter(a);
+  const bc = nodeCenter(b);
+  const active = lastFired && (transById[lastFired] === a || transById[lastFired] === b);
+  const dx = bc.x - ac.x;
+  const dy = bc.y - ac.y;
+  const mx = ac.x + dx * 0.5;
+  const c1x = ac.x + dx * 0.38;
+  const c2x = ac.x + dx * 0.62;
+  const curve = Math.abs(dy) > 80 ? Math.sign(dy || 1) * 24 : 0;
+  const d = `M ${ac.x} ${ac.y} C ${c1x} ${ac.y + curve}, ${c2x} ${bc.y - curve}, ${bc.x} ${bc.y}`;
+  const cls = 'arc' + (active ? ' active' : '') + (dir === 'out' && Math.abs(dy) > 120 ? ' dashed' : '');
+  makeEl('path', {d, class: cls, 'marker-end': active ? 'url(#arrowActive)' : 'url(#arrow)'});
+}
+
+function drawPlace(p) {
+  const g = makeEl('g', {'data-type':'place', 'data-id':p.id});
+  const count = (marking[p.id] || []).length;
+  const cls = 'place-node' + (count ? ' has-token' : '') + (p.pending ? ' pending' : '');
+  makeEl('circle', {cx:p.x, cy:p.y, r:31, class:cls}, g);
+  wrapText(g, p.label, p.x, p.y + 48, 88, 'place-label', {background:true, bgClass:'place-label-bg'});
+  makeEl('text', {x:p.x, y:p.y - 42, class:'place-id'}).textContent = p.id.replace('P_', 'P:');
+
+  const tokens = marking[p.id] || [];
+  if (tokens.length === 1) {
+    makeEl('circle', {cx:p.x, cy:p.y, r:12, class:'token'}, g);
+    makeEl('text', {x:p.x, y:p.y + .5, class:'token-label'}, g).textContent = tokens[0].label.slice(0,3);
+  } else if (tokens.length > 1) {
+    const positions = tokenPositions(tokens.length, p.x, p.y);
+    positions.slice(0, 4).forEach((pos, idx) => {
+      makeEl('circle', {cx:pos.x, cy:pos.y, r:9, class:'token'}, g);
+      makeEl('text', {x:pos.x, y:pos.y + .5, class:'token-label'}, g).textContent = tokens[idx].label.slice(0,2);
+    });
+    if (tokens.length > 4) {
+      makeEl('circle', {cx:p.x, cy:p.y, r:13, class:'token'}, g);
+      makeEl('text', {x:p.x, y:p.y + .5, class:'token-count'}, g).textContent = tokens.length;
+    }
+  }
+
+  attachTooltip(g, `<b>${p.id}</b><div class="muted">${p.label}</div><div class="muted">${p.desc}</div><div class="muted">Tokens: ${tokens.map(t=>t.label).join(', ') || 'aucun'}</div>`);
+}
+
+function tokenPositions(n, x, y) {
+  const base = [
+    {x:x-10,y:y-8},{x:x+10,y:y-8},{x:x-10,y:y+10},{x:x+10,y:y+10}
+  ];
+  return base.slice(0, Math.max(1, Math.min(n, 4)));
+}
+
+function drawTransition(t) {
+  const g = makeEl('g', {'data-type':'transition', 'data-id':t.id});
+  const enabled = isEnabled(t);
+  const cls = 'trans-node' + (enabled ? ' enabled' : '') + (lastFired === t.id ? ' last-fired' : '');
+  makeEl('rect', {x:t.x-19, y:t.y-34, width:38, height:68, class:cls}, g);
+  wrapText(g, t.label, t.x, t.y - 66, 100, 'trans-label', {background:true, bgClass:'trans-label-bg'});
+  makeEl('text', {x:t.x, y:t.y + 52, class:'trans-id'}, g).textContent = t.id.replace('T_', 'T:');
+  g.style.cursor = enabled ? 'pointer' : 'default';
+  g.addEventListener('click', () => {
+    if (enabled) fireTransition(t.id, {manual:true});
+  });
+  attachTooltip(g, `<b>${t.id}</b><div class="muted">${t.desc}</div><div class="code-ref">${t.code}</div><div class="muted">Entrées: ${t.inputs.join(', ')}</div><div class="muted">Sorties: ${t.outputs.map(o=>o[0]).join(', ')}</div>`);
+}
+
+function wrapText(parent, text, x, y, maxWidth, cls, options = {}) {
+  const words = text.split(' ');
+  const lineHeight = options.lineHeight || 12;
+  const paddingX = options.paddingX ?? 6;
+  const paddingY = options.paddingY ?? 4;
+  const maxLines = options.maxLines || 3;
+  let lines = [];
+  let line = '';
+  words.forEach(w => {
+    const test = line ? line + ' ' + w : w;
+    if (test.length * 6.1 > maxWidth && line) { lines.push(line); line = w; }
+    else line = test;
+  });
+  if (line) lines.push(line);
+  lines = lines.slice(0, maxLines);
+
+  const group = makeEl('g', {}, parent);
+  const longest = lines.reduce((m, ln) => Math.max(m, ln.length), 0);
+  const boxWidth = Math.min(maxWidth + paddingX * 2, Math.max(28, longest * 6.2 + paddingX * 2));
+  const boxHeight = Math.max(18, lines.length * lineHeight + paddingY * 2 - 2);
+  if (options.background) {
+    makeEl('rect', {
+      x: x - boxWidth / 2,
+      y: y - 10 - paddingY,
+      width: boxWidth,
+      height: boxHeight,
+      rx: 6,
+      class: options.bgClass || 'place-label-bg'
+    }, group);
+  }
+  lines.forEach((ln, i) => {
+    makeEl('text', {x, y: y + i * lineHeight, class: cls}, group).textContent = ln;
+  });
+  return group;
+}
+
+function attachTooltip(el, html) {
+  el.addEventListener('mousemove', evt => {
+    tooltip.style.display = 'block';
+    tooltip.innerHTML = html;
+    const wrap = document.getElementById('canvasWrap').getBoundingClientRect();
+    tooltip.style.left = Math.min(evt.clientX - wrap.left + 16, wrap.width - 395) + 'px';
+    tooltip.style.top = Math.min(evt.clientY - wrap.top + 16, wrap.height - 180) + 'px';
+  });
+  el.addEventListener('mouseleave', () => tooltip.style.display = 'none');
+}
+
+function renderSide() {
+  if (currentTab === 'state') renderStateTab();
+  else if (currentTab === 'ltl') renderLtlTab();
+  else if (currentTab === 'deadlock') renderDeadlockTab();
+  else renderMappingTab();
+}
+
+function renderStateTab() {
+  const next = nextTransitionId();
+  const nextT = next ? transById[next] : null;
+  const lastT = lastFired ? transById[lastFired] : null;
+  const rows = Object.entries(marking)
+    .filter(([, tokens]) => tokens.length)
+    .map(([pid, tokens]) => `<div class="marking-row"><div><div class="marking-place">${placeById[pid]?.label || pid}</div><div class="marking-tokens">${pid}<br>${tokens.map(t=>t.label).join(', ')}</div></div><span class="pill ok">${tokens.length}</span></div>`)
+    .join('');
+
+  sideContent.innerHTML = `
+    <div class="card">
+      <h2>Scénario courant</h2>
+      <div class="step-title">${scenario.name}</div>
+      <p>${scenario.description}</p>
+      <div class="pill-row">
+        <span class="pill">Étape ${history.length}/${scenario.sequence.length}</span>
+        <span class="pill ${nextT && isEnabled(nextT) ? 'ok' : nextT ? 'warn' : 'ok'}">${nextT ? 'Prochaine: ' + nextT.label : 'Scénario terminé'}</span>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Dernière transition</h2>
+      ${lastT ? `<div class="step-title">${lastT.id} — ${lastT.label}</div><p>${lastT.desc}</p><div class="code-ref">${lastT.code}</div>` : '<p>Aucune transition tirée.</p>'}
+    </div>
+    <div class="card">
+      <h2>Marquage actuel</h2>
+      <div class="marking-list">${rows || '<p>Aucun token.</p>'}</div>
+    </div>
+    <div class="card">
+      <h2>Historique</h2>
+      ${renderHistory()}
+    </div>
+  `;
+}
+
+function renderHistory() {
+  if (!history.length) return '<p>Aucune étape tirée.</p>';
+  return history.map((h, i) => {
+    const t = transById[h.transitionId];
+    return `<div class="history-item"><div class="history-index">${String(i+1).padStart(2,'0')}</div><div><div class="history-name">${t.id} — ${t.label}</div><div class="history-msg">${t.desc}</div></div></div>`;
+  }).join('');
+}
+
+const ltlProperties = [
+  {
+    id:'L1',
+    formula:'G(txCreated -> F(txAccepted || txRejected))',
+    meaning:'Toute transaction créée par Wallet.CreateTx doit finir confirmée ou rejetée.',
+    triggers:['txCreated'], targetAny:['txAccepted','txRejected']
+  },
+  {
+    id:'L2',
+    formula:'G(blockMined -> F(dbSaved || dbFailed))',
+    meaning:'Tout bloc miné doit recevoir une réponse de persistance DB.',
+    triggers:['blockMined'], targetAny:['dbSaved','dbFailed']
+  },
+  {
+    id:'L3',
+    formula:'G(dbSaved -> F(mempoolCleaned))',
+    meaning:'Après DB.Success, les transactions confirmées doivent être supprimées de la mempool.',
+    triggers:['dbSaved'], targetAny:['mempoolCleaned']
+  },
+  {
+    id:'L4',
+    formula:'G(dbFailed -> F(txRejected))',
+    meaning:'Après DB.Failed, les pendingTxs doivent être rejetées via replyTo false.',
+    triggers:['dbFailed'], targetAny:['txRejected']
+  },
+  {
+    id:'L5',
+    formula:'G(insufficientFunds -> F(txRejected))',
+    meaning:'Une insuffisance de fonds doit entraîner un refus.',
+    triggers:['insufficientFunds'], targetAny:['txRejected']
+  },
+  {
+    id:'L6',
+    formula:'G(signatureInvalid -> F(txRejected))',
+    meaning:'Une signature invalide doit entraîner un refus.',
+    triggers:['signatureInvalid'], targetAny:['txRejected']
+  },
+  {
+    id:'L7',
+    formula:'G(dbFailed -> X(!mempoolCleaned))',
+    meaning:'En cas d’échec DB, le code ne nettoie pas la mempool immédiatement.',
+    custom:'dbFailedNoImmediateClean'
+  },
+  {
+    id:'L8',
+    formula:'G(validatorWaitingDb -> X(!startMining || tickIgnored))',
+    meaning:'Pendant waitingForDbState, un tick de minage ne lance pas un nouveau minage; il est ignoré.',
+    custom:'waitingDbIgnoresTick'
+  }
+];
+
+function eventsByStep() {
+  return history.map(h => h.events || []);
+}
+
+function evalLtl(prop) {
+  const ev = eventsByStep();
+  if (prop.custom === 'dbFailedNoImmediateClean') {
+    let seen = false;
+    for (let i=0;i<ev.length;i++) {
+      if (ev[i].includes('dbFailed')) {
+        seen = true;
+        const next = ev[i+1] || [];
+        if (next.includes('mempoolCleaned')) return {status:'bad', detail:`Violation à l’étape ${i+2}: nettoyage juste après dbFailed.`};
+      }
+    }
+    return seen ? {status:'ok', detail:'dbFailed observé; aucun nettoyage immédiat détecté.'} : {status:'na', detail:'Aucun dbFailed observé dans le préfixe courant.'};
+  }
+  if (prop.custom === 'waitingDbIgnoresTick') {
+    let seen = false;
+    for (let i=0;i<ev.length;i++) {
+      if (ev[i].includes('validatorWaitingDb')) {
+        seen = true;
+        const next = ev[i+1] || [];
+        if (next.includes('startMining')) return {status:'bad', detail:`Violation à l’étape ${i+2}: nouveau minage lancé pendant waiting DB.`};
+      }
+    }
+    const ignored = ev.some(e => e.includes('tickIgnored'));
+    if (ignored) return {status:'ok', detail:'Tick ignoré observé pendant waitingForDbState.'};
+    return seen ? {status:'pending', detail:'Validator en attente DB; aucun tick suivant observé pour le moment.'} : {status:'na', detail:'Aucun état waiting DB observé.'};
+  }
+
+  let triggerSeen = false;
+  let pending = false;
+  for (let i=0;i<ev.length;i++) {
+    const hasTrigger = prop.triggers.some(tr => ev[i].includes(tr));
+    if (!hasTrigger) continue;
+    triggerSeen = true;
+    let fulfilled = false;
+    for (let j=i;j<ev.length;j++) {
+      if (prop.targetAny.some(target => ev[j].includes(target))) { fulfilled = true; break; }
+    }
+    if (!fulfilled) pending = true;
+  }
+  if (!triggerSeen) return {status:'na', detail:'Propriété non déclenchée dans le préfixe courant.'};
+  if (pending) {
+    const completed = history.length >= scenario.sequence.length;
+    return completed ? {status:'bad', detail:'Un déclencheur existe mais la conséquence attendue n’apparaît jamais dans ce scénario.'} : {status:'pending', detail:'Déclenchée, conséquence encore attendue dans une étape future.'};
+  }
+  return {status:'ok', detail:'Tous les déclencheurs observés ont une conséquence attendue dans la trace.'};
+}
+
+function renderLtlTab() {
+  const rows = ltlProperties.map(p => {
+    const r = evalLtl(p);
+    const statusLabel = r.status === 'ok' ? 'vraie' : r.status === 'bad' ? 'violée' : r.status === 'pending' ? 'en attente' : 'n/a';
+    const cls = r.status === 'ok' ? 'ok' : r.status === 'bad' ? 'bad' : r.status === 'pending' ? 'pending' : 'na';
+    return `<div class="ltl-row">
+      <div class="ltl-head"><div class="formula">${p.id}. ${p.formula}</div><span class="status ${cls}">${statusLabel}</span></div>
+      <p>${p.meaning}</p>
+      <p>${r.detail}</p>
+    </div>`;
+  }).join('');
+
+  sideContent.innerHTML = `
+    <div class="card">
+      <h2>Vérification LTL sur la trace courante</h2>
+      <p>Le panneau évalue les formules sur le préfixe simulé du scénario courant. Il ne s’agit pas d’un model checking exhaustif: les propriétés indiquent la cohérence de la trace jouée, pas une preuve globale sur toutes les exécutions possibles.</p>
+    </div>
+    ${rows}
+    <div class="card">
+      <h2>Événements atomiques observés</h2>
+      <table class="small-table"><thead><tr><th>Étape</th><th>Transition</th><th>Propositions</th></tr></thead><tbody>
+      ${history.map((h,i)=>`<tr><td>${i+1}</td><td>${h.transitionId}</td><td>${(h.events||[]).join(', ') || '—'}</td></tr>`).join('') || '<tr><td colspan="3">Aucun événement.</td></tr>'}
+      </tbody></table>
+    </div>
+  `;
+}
+
+function renderDeadlockTab() {
+  const enabled = enabledTransitions({includeExternal:false});
+  const pendingPlaces = places.filter(p => p.pending && hasToken(p.id));
+  const next = nextTransitionId();
+  const scenarioBlocked = next && !isEnabled(transById[next]);
+  const trueDeadlock = enabled.length === 0 && pendingPlaces.length > 0;
+  const terminalStable = !next && pendingPlaces.length === 0;
+  const classifications = [];
+  if (trueDeadlock) classifications.push(`<span class="pill bad">deadlock possible</span>`);
+  if (scenarioBlocked) classifications.push(`<span class="pill bad">scénario bloqué: ${next}</span>`);
+  if (terminalStable) classifications.push(`<span class="pill ok">état terminal stable</span>`);
+  if (!trueDeadlock && !terminalStable) classifications.push(`<span class="pill warn">état intermédiaire</span>`);
+
+  const mempoolStillHasTx = hasToken('P_MEMPOOL_TX_PENDING');
+  const dbFailedSeen = history.some(h => (h.events || []).includes('dbFailed'));
+  const livelockNote = dbFailedSeen && mempoolStillHasTx
+    ? `<div class="card"><h2>Point d’analyse important</h2><p>Après DB.Failed, le code notifie false aux replyTo mais ne déclenche pas RemoveTxs. Le token reste donc en mempool. Ce n’est pas un deadlock strict: un prochain StartMining peut reprendre cette transaction. C’est une zone à discuter comme retry implicite ou risque de répétition.</p></div>`
+    : '';
+
+  sideContent.innerHTML = `
+    <div class="card">
+      <h2>Analyse deadlock / état terminal</h2>
+      <div class="pill-row">${classifications.join('')}</div>
+      <p>Les transitions externes HTTP ne sont pas comptées comme sorties de deadlock, car elles dépendent d’un utilisateur extérieur au réseau.</p>
+    </div>
+    ${livelockNote}
+    <div class="card">
+      <h2>Places en attente</h2>
+      ${pendingPlaces.length ? `<table class="small-table"><tbody>${pendingPlaces.map(p=>`<tr><td>${p.id}</td><td>${p.label}</td><td>${(marking[p.id]||[]).length} token(s)</td></tr>`).join('')}</tbody></table>` : '<p>Aucune place pending ne contient de token.</p>'}
+    </div>
+    <div class="card">
+      <h2>Transitions internes activables</h2>
+      ${enabled.length ? `<table class="small-table"><thead><tr><th>Transition</th><th>Message/code</th></tr></thead><tbody>${enabled.map(t=>`<tr><td>${t.id}<br>${t.label}</td><td>${t.code}</td></tr>`).join('')}</tbody></table>` : '<p>Aucune transition interne activable.</p>'}
+    </div>
+    <div class="card">
+      <h2>Lecture pour la présentation</h2>
+      <p>Un état avec mempool vide et Validator idle est normal, pas un deadlock. Un deadlock intéressant serait une requête en attente sans transition interne possible. Une boucle potentielle intéressante est la répétition d’une transaction restée en mempool après DB.Failed.</p>
+    </div>
+  `;
+}
+
+function renderMappingTab() {
+  const groups = lanes.map(l => {
+    const ts = transitions.filter(t => t.lane === l.id);
+    return `<div class="card"><h2>${l.label}</h2><p>${l.note}</p><table class="small-table"><thead><tr><th>Transition</th><th>Code Scala modélisé</th></tr></thead><tbody>${ts.map(t=>`<tr><td>${t.id}<br><b>${t.label}</b></td><td>${t.code}</td></tr>`).join('')}</tbody></table></div>`;
+  }).join('');
+  sideContent.innerHTML = `
+    <div class="card">
+      <h2>Correspondance avec le backend Scala</h2>
+      <p>Le modèle représente le flux de contrôle des acteurs et messages utilisés par l’API. Il corrige les états intermédiaires fantômes: l’attente HTTP, le batch mempool, GetLastBlock, le minage et SaveBlock sont maintenant consommés par les transitions suivantes.</p>
+      <p>Les valeurs métier ne sont pas calculées dans ce réseau: montants, fees, nonce, hash, signatures réelles et solde final sont représentés par des événements abstraits. DB.AppendBlock et Wallet.GetPrivateKey existent dans les protocoles mais ne sont pas exposés dans le flux API principal modélisé.</p>
+      <div class="pill-row"><span class="pill ok">GetTxs non destructif</span><span class="pill ok">RemoveTxs après DB.Success</span><span class="pill ok">GET /balance modélisé</span><span class="pill ok">mempool non vide supportée</span><span class="pill warn">SaveFailed garde la mempool</span><span class="pill warn">LTL sur traces</span></div>
+    </div>
+    ${groups}
+  `;
+}
+
+function renderAll() {
+  renderSvg();
+  renderSide();
+  const next = nextTransitionId();
+  document.getElementById('stepBadge').textContent = `Étape ${history.length} / ${scenario.sequence.length}`;
+  document.getElementById('stepBtn').disabled = !next;
+  document.getElementById('backBtn').disabled = snapshots.length <= 1;
+}
+
+function flashMessage(msg) {
+  const old = document.getElementById('stepBadge').textContent;
+  document.getElementById('stepBadge').textContent = msg;
+  setTimeout(() => document.getElementById('stepBadge').textContent = old, 1200);
+}
+
+function setupUi() {
+  const sel = document.getElementById('scenarioSelect');
+  scenarios.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = s.name;
+    sel.appendChild(opt);
+  });
+  sel.addEventListener('change', () => {
+    scenario = scenarios.find(s => s.id === sel.value) || scenarios[0];
+    reset();
+  });
+  document.getElementById('resetBtn').addEventListener('click', reset);
+  document.getElementById('backBtn').addEventListener('click', stepBack);
+  document.getElementById('stepBtn').addEventListener('click', stepForward);
+  document.getElementById('playBtn').addEventListener('click', toggleAuto);
+  document.getElementById('speedRange').addEventListener('input', () => {
+    if (isPlaying) { stopAuto(); playAuto(); }
+  });
+  document.getElementById('zoomInBtn').addEventListener('click', () => zoom(0.86));
+  document.getElementById('zoomOutBtn').addEventListener('click', () => zoom(1.16));
+  document.getElementById('fitBtn').addEventListener('click', () => { viewBox = {x:0,y:0,w:CANVAS.w,h:CANVAS.h}; renderAll(); });
+  document.querySelectorAll('.tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentTab = btn.dataset.tab;
+      renderSide();
+    });
+  });
+
+  // Pan SVG with drag.
+  let dragging = false;
+  let last = null;
+  svg.addEventListener('mousedown', e => { dragging = true; last = {x:e.clientX,y:e.clientY}; });
+  window.addEventListener('mouseup', () => { dragging = false; last = null; });
+  window.addEventListener('mousemove', e => {
+    if (!dragging || !last) return;
+    const dx = (e.clientX - last.x) * viewBox.w / svg.clientWidth;
+    const dy = (e.clientY - last.y) * viewBox.h / svg.clientHeight;
+    viewBox.x -= dx; viewBox.y -= dy;
+    last = {x:e.clientX,y:e.clientY};
+    renderSvg();
+  });
+  svg.addEventListener('wheel', e => {
+    e.preventDefault();
+    zoom(e.deltaY < 0 ? 0.9 : 1.1);
+  }, {passive:false});
+}
+
+function zoom(factor) {
+  const cx = viewBox.x + viewBox.w / 2;
+  const cy = viewBox.y + viewBox.h / 2;
+  viewBox.w = Math.max(900, Math.min(4200, viewBox.w * factor));
+  viewBox.h = Math.max(720, Math.min(3400, viewBox.h * factor));
+  viewBox.x = cx - viewBox.w / 2;
+  viewBox.y = cy - viewBox.h / 2;
+  renderAll();
+}
+
+setupUi();
+reset();
+</script>
+</body>
+</html>
