@@ -11,7 +11,7 @@ object Miner {
     if (hash.startsWith(difficulty)) {
       (nonce, hash)
     } else {
-      mine(txsData, previousHash, timestamp, nonce + 1, difficulty) // Appel récursif
+      mine(txsData, previousHash, timestamp, nonce + 1, difficulty) // recursive call
     }
   }
 }

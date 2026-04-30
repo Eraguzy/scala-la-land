@@ -27,20 +27,13 @@ object ValidatorActor {
             Validator.ProcessMining(hash.toString, id.toString.toInt)
         }
 
-        // new matias => nouvel adapter pour accepter les retours de la DB pour la création
+        // Adapter to receive the DB save confirmation before confirming transactions.
         val dbStatusAdapter = ctx.messageAdapter[DB.Response] {
           case DB.Success     => Validator.ConfirmSaved
           case DB.Failed(err) => Validator.SaveFailed(err)
         }
 
-        behavior(
-          mempool,
-          db,
-          txResponseAdapter,
-          dbResponseAdapter,
-          dbStatusAdapter,
-          List.empty
-        )
+        behavior(mempool, db, txResponseAdapter, dbResponseAdapter, dbStatusAdapter, List.empty)
       }
     }
 
@@ -55,7 +48,7 @@ object ValidatorActor {
     Behaviors.receive { (ctx, msg) =>
       msg match {
         case Validator.StartMining =>
-          ctx.log.info("Validator : Check Mempool...")
+          ctx.log.info("Validator: polling mempool...")
           mempool ! Mempool.GetTxs(txAdapter)
           Behaviors.same
 
@@ -67,31 +60,17 @@ object ValidatorActor {
           }
 
         case Validator.ProcessMining(lastHash, currentId) =>
-          ctx.log.info(s"Validator : ⛏️ Minage...")
+          ctx.log.info(s"Validator: mining block $currentId...")
           val timestamp = System.currentTimeMillis()
-          val txsData = pendingTxs.map(_.tx.txId).mkString("-")
-          val (nonce, blockHash) =
-            functions.Miner.mine(txsData, lastHash, timestamp, 0, DIFFICULTY)
+          val txsData   = pendingTxs.map(_.tx.txId).mkString("-")
+          val (nonce, blockHash) = functions.Miner.mine(txsData, lastHash, timestamp, 0, DIFFICULTY)
 
-          // ctx.log.info(s"Validator : Bloc miné ! Envoi à la DB...")
-          ctx.log.info(
-            s"Validator : ⛏️ BLOC MINÉ ! Nonce trouvé : $nonce | Hash : $blockHash"
-          )
-          val newBlock =
-            Block(currentId, pendingTxs.map(_.tx), lastHash, timestamp)
+          ctx.log.info(s"Validator: block mined! Nonce=$nonce | Hash=$blockHash")
+          val newBlock = Block(currentId, pendingTxs.map(_.tx), lastHash, timestamp)
 
-          // On passe l'adapter à la DB pour qu'elle puisse répondre
+          // Save the block and transition to the waiting state until the DB confirms.
           db ! DB.SaveBlock(newBlock, dbStatusAdapter)
-
-          // IMPORTANT : On change d'état vers l'attente
-          waitingForDbState(
-            mempool,
-            db,
-            txAdapter,
-            dbAdapter,
-            dbStatusAdapter,
-            pendingTxs
-          )
+          waitingForDbState(mempool, db, txAdapter, dbAdapter, dbStatusAdapter, pendingTxs)
 
         case _ => Behaviors.same
       }
@@ -108,36 +87,18 @@ object ValidatorActor {
     Behaviors.receive { (ctx, msg) =>
       msg match {
         case Validator.ConfirmSaved =>
-          ctx.log.info("Validator : Succès DB. Nettoyage mempool.")
-
-          // send the final reply => mempool => wallet.createTx
+          ctx.log.info("Validator: DB confirmed. Notifying wallets and cleaning mempool.")
           pendingTxs.foreach(_.replyTo ! true)
           mempool ! Mempool.RemoveTxs(pendingTxs.map(_.tx))
-          behavior(
-            mempool,
-            db,
-            txAdapter,
-            dbAdapter,
-            dbStatusAdapter,
-            List.empty
-          )
+          behavior(mempool, db, txAdapter, dbAdapter, dbStatusAdapter, List.empty)
 
         case Validator.SaveFailed(err) =>
-          ctx.log.error(s"Validator : Échec DB ($err).")
-
-          // send the final reply => mempool => wallet.createTx
+          ctx.log.error(s"Validator: DB save failed ($err). Rejecting transactions.")
           pendingTxs.foreach(_.replyTo ! false)
-          behavior(
-            mempool,
-            db,
-            txAdapter,
-            dbAdapter,
-            dbStatusAdapter,
-            List.empty
-          )
+          behavior(mempool, db, txAdapter, dbAdapter, dbStatusAdapter, List.empty)
 
         case _ =>
-          // On ignore les nouveaux StartMining tant qu'on n'a pas fini d'enregistrer
+          // Ignore new StartMining ticks while waiting for DB confirmation.
           Behaviors.same
       }
     }
