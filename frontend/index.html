@@ -327,8 +327,9 @@
   // Wallet UI
   async function createWallet() {
     const name    = document.getElementById('w-name').value.trim();
-    const balance = parseInt(document.getElementById('w-balance').value) || 0;
-    if (!name) { toast('Wallet name is required', 'error'); return; }
+    const balance = parseInt(document.getElementById('w-balance').value);
+    if (!name)           { toast('Wallet name is required', 'error');               return; }
+    if (isNaN(balance) || balance < 0) { toast('Initial balance cannot be negative', 'error'); return; }
 
     const res = await fetch(`${API}/wallets`, {
       method: 'POST',
@@ -515,7 +516,7 @@
   function renderMempool(txs) {
     const el = document.getElementById('mempool-list');
     if (!txs.length) {
-      el.innerHTML = '<div class="empty">Mempool is empty — transactions will be mined shortly</div>';
+      el.innerHTML = '<div class="empty">Mempool is empty - transactions will be mined shortly</div>';
       return;
     }
     el.innerHTML = txs.map((t, i) => `

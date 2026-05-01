@@ -12,6 +12,7 @@ object Registry {
   sealed trait CreateWalletResponse
   case class WalletCreated(name: String) extends CreateWalletResponse
   case object WalletAlreadyExists extends CreateWalletResponse
+  case object NegativeBalance extends CreateWalletResponse
 
   sealed trait GetWalletResponse
   case class WalletFound(ref: ActorRef[Wallet.Command]) extends GetWalletResponse

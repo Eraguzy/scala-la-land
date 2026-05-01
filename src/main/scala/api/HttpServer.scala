@@ -17,6 +17,8 @@ object HttpServer {
       port: Int = 8080
   )(implicit system: ActorSystem[_]): Unit = {
 
+    // Akka HTTP still runs on the classic actor system internally,
+    // so we need to convert the typed one before passing it
     implicit val classicSystem: akka.actor.ActorSystem = system.toClassic
     implicit val ec: ExecutionContext                  = system.executionContext
 
@@ -26,10 +28,10 @@ object HttpServer {
       case Success(binding) =>
         val addr = binding.localAddress
         println(s"")
-        println(s"  ╔══════════════════════════════════════════╗")
-        println(s"  ║   Blockchain HTTP Server started         ║")
-        println(s"  ║   http://localhost:${addr.getPort}                 ║")
-        println(s"  ╚══════════════════════════════════════════╝")
+        println(s"  --------------------------------------------")
+        println(s"  -  Blockchain HTTP Server started          -")
+        println(s"  -  http://localhost:${addr.getPort}        -")
+        println(s"  --------------------------------------------")
         println(s"")
       case Failure(ex) =>
         println(s"[ERROR] Failed to start HTTP server: ${ex.getMessage}")

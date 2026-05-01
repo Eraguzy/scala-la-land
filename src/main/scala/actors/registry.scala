@@ -17,7 +17,10 @@ object RegistryActor {
     Behaviors.receive { (ctx, msg) =>
       msg match {
         case Registry.CreateWallet(name, initialBalance, replyTo) =>
-          if (wallets.contains(name)) {
+          if (initialBalance < 0) {
+            replyTo ! Registry.NegativeBalance
+            Behaviors.same
+          } else if (wallets.contains(name)) {
             replyTo ! Registry.WalletAlreadyExists
             Behaviors.same
           } else {

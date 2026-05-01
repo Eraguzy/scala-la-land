@@ -20,6 +20,8 @@ class Routes(
     mempool: ActorRef[Mempool.Command]
 )(implicit system: ActorSystem[_]) {
 
+  // 30s because CreateTx waits for the validator to actually mine the block —
+  // mining runs every 5s and there may be a queue of pending txs ahead
   implicit val timeout: Timeout         = Timeout(30.seconds)
   implicit val ec: ExecutionContext     = system.executionContext
   implicit val scheduler: Scheduler    = system.scheduler
@@ -49,13 +51,19 @@ class Routes(
                 },
                 post {
                   entity(as[CreateWalletRequest]) { req =>
-                    onSuccess(registry.ask[Registry.CreateWalletResponse](
-                      ref => Registry.CreateWallet(req.name, BigInt(req.initialBalance), ref)
-                    )) {
-                      case Registry.WalletCreated(name) =>
-                        complete(StatusCodes.Created, WalletResponse(name).toJson)
-                      case Registry.WalletAlreadyExists =>
-                        complete(StatusCodes.Conflict, ErrorResponse(s"Wallet '${req.name}' already exists").toJson)
+                    if (req.initialBalance < 0) {
+                      complete(StatusCodes.BadRequest, ErrorResponse("Initial balance cannot be negative").toJson)
+                    } else {
+                      onSuccess(registry.ask[Registry.CreateWalletResponse](
+                        ref => Registry.CreateWallet(req.name, BigInt(req.initialBalance), ref)
+                      )) {
+                        case Registry.WalletCreated(name)  =>
+                          complete(StatusCodes.Created, WalletResponse(name).toJson)
+                        case Registry.WalletAlreadyExists  =>
+                          complete(StatusCodes.Conflict,   ErrorResponse(s"Wallet '${req.name}' already exists").toJson)
+                        case Registry.NegativeBalance      =>
+                          complete(StatusCodes.BadRequest, ErrorResponse("Initial balance cannot be negative").toJson)
+                      }
                     }
                   }
                 }

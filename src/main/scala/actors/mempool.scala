@@ -23,7 +23,7 @@ object MempoolActor {
             ctx.log.info("Queue order (by fee desc): " + updated.map(p => s"${p.tx.txId.take(8)}(fee=${p.tx.tx.fees})").mkString(", "))
             behavior(updated)
           } else {
-            ctx.log.error(s"Mempool: REJECTED — invalid signature for TX ${signedTx.txId}.")
+            ctx.log.error(s"Mempool: REJECTED - invalid signature for TX ${signedTx.txId}.")
             replyTo ! false
             Behaviors.same
           }
@@ -36,7 +36,7 @@ object MempoolActor {
             ctx.log.info(s"Mempool: sending ${toSend.size} transaction(s) to Validator.")
             replyTo ! Mempool.Txs(toSend)
           } else {
-            ctx.log.info("Mempool: empty — nothing to send to Validator.")
+            ctx.log.info("Mempool: empty - nothing to send to Validator.")
             replyTo ! Mempool.Txs(List.empty)
           }
           Behaviors.same

@@ -23,6 +23,7 @@ dist/
 
 # Logs
 *.log
+ledger.txt
 
 # Gradle
 .gradle

@@ -1,5 +1,9 @@
 name := "blockchain-akka"
 
+// Default entry point: HTTP mode with frontend.
+// To run the terminal mode: sbt "runMain blockchain.MainTerminal"
+Compile / mainClass := Some("blockchain.Main")
+
 version := "0.1"
 
 scalaVersion := "3.3.1"

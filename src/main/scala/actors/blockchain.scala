@@ -9,6 +9,8 @@ import scala.util.{Failure, Success, Using}
 object DBActor {
 
   def apply(): Behavior[DB.Command] = {
+    // start fresh every run — ledger from a previous session would have
+    // different public keys so balances would be wrong anyway
     val file = new java.io.File("ledger.txt")
     if (file.exists()) file.delete()
 
@@ -16,6 +18,8 @@ object DBActor {
       .onFailure[Exception](SupervisorStrategy.resume)
   }
 
+  // we keep blocks in memory too (not just on disk) so the HTTP API
+  // can serve them without having to re-parse the file on every request
   private def behavior(lastHash: String, currentId: Int, blocks: List[DB.BlockInfo]): Behavior[DB.Command] =
     Behaviors.receive { (ctx, msg) =>
       msg match {
@@ -24,6 +28,7 @@ object DBActor {
           Behaviors.same
 
         case DB.AppendBlock(block, replyTo) =>
+          // Using{} auto-closes the writer even if an exception is thrown
           val writeResult = Using(new PrintWriter(new FileWriter("ledger.txt", true))) { writer =>
             writer.println(s"BLOCK|ID:$currentId|PREV:$lastHash|TS:${block.timestamp}")
             block.transactions.foreach { tx =>
@@ -36,8 +41,8 @@ object DBActor {
             case Success(_) =>
               ctx.log.info(s"DB: Block $currentId successfully saved.")
               replyTo ! DB.Success
-              val newHash = functions.Crypto.sha256(block.toString)
-              val txInfos = block.transactions.map(stx => DB.TxInfo(stx.tx.from, stx.tx.to, stx.tx.amount.toDouble))
+              val newHash  = functions.Crypto.sha256(block.toString)
+              val txInfos  = block.transactions.map(stx => DB.TxInfo(stx.tx.from, stx.tx.to, stx.tx.amount.toDouble))
               val blockInfo = DB.BlockInfo(currentId.toLong, lastHash, block.timestamp, txInfos)
               behavior(newHash, currentId + 1, blocks :+ blockInfo)
 
@@ -60,8 +65,8 @@ object DBActor {
             case Success(_) =>
               ctx.log.info(s"DB: Block $currentId successfully saved.")
               replyTo ! DB.Success
-              val newHash = functions.Crypto.sha256(block.toString)
-              val txInfos = block.transactions.map(stx => DB.TxInfo(stx.tx.from, stx.tx.to, stx.tx.amount.toDouble))
+              val newHash   = functions.Crypto.sha256(block.toString)
+              val txInfos   = block.transactions.map(stx => DB.TxInfo(stx.tx.from, stx.tx.to, stx.tx.amount.toDouble))
               val blockInfo = DB.BlockInfo(currentId.toLong, lastHash, block.timestamp, txInfos)
               behavior(newHash, currentId + 1, blocks :+ blockInfo)
 
@@ -87,10 +92,10 @@ object DBActor {
                 } else if (line.startsWith("TX|") && currentBlockTimestamp <= targetTimestamp) {
                   val parts = line.split("\\|")
                   if (parts.length >= 4) {
-                    val sender = parts(1)
+                    val sender   = parts(1)
                     val receiver = parts(2)
-                    val amount = scala.util.Try(parts(3).toDouble).getOrElse(0.0)
-                    if (sender == publicKey) balance -= amount
+                    val amount   = scala.util.Try(parts(3).toDouble).getOrElse(0.0)
+                    if (sender   == publicKey) balance -= amount
                     if (receiver == publicKey) balance += amount
                   }
                 }
