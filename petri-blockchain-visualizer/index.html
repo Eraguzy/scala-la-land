@@ -172,7 +172,7 @@
 
     .tabs {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(5, 1fr);
       border-bottom: 1px solid var(--line);
     }
 
@@ -384,6 +384,7 @@
     <aside class="side">
       <div class="tabs">
         <button class="tab active" data-tab="state">État</button>
+        <button class="tab" data-tab="analysis">Analyse</button>
         <button class="tab" data-tab="ltl">LTL</button>
         <button class="tab" data-tab="deadlock">Deadlock</button>
         <button class="tab" data-tab="mapping">Code</button>
@@ -397,7 +398,6 @@
 'use strict';
 
 const lanes = [
-  { id: 'API', label: 'HTTP API / Routes.scala', y: 40, h: 260, note: 'Entrées/sorties REST, ask pattern avec Timeout(30s)' },
   { id: 'Registry', label: 'RegistryActor', y: 340, h: 210, note: 'Map name -> ActorRef[Wallet.Command]' },
   { id: 'Wallet', label: 'WalletActor', y: 590, h: 390, note: 'Clés RSA, nonce, txInProgress, file interne' },
   { id: 'DB', label: 'DBActor', y: 1020, h: 280, note: 'ledger.txt, lastHash, currentId, balances, blocks' },
@@ -406,17 +406,6 @@ const lanes = [
 ];
 
 const places = [
-  // API
-  {id:'P_API_READY', lane:'API', x:90, y:185, label:'API prête', desc:'Capacité externe à recevoir une requête HTTP.'},
-  {id:'P_API_CREATE_WALLET_REQ', lane:'API', x:600, y:150, label:'POST /wallets', desc:'Requête POST /api/wallets reçue.'},
-  {id:'P_API_TRANSFER_REQ', lane:'API', x:600, y:215, label:'POST /transfer', desc:'Requête POST /api/wallets/:name/transfer reçue.'},
-  {id:'P_API_READ_REQ', lane:'API', x:600, y:280, label:'GET lecture', desc:'Requête GET lecture: wallets, balance, pubkey, blockchain, mempool.'},
-  {id:'P_API_WAITING_TX_REPLY', lane:'API', x:1120, y:215, label:'API attend bool', desc:'La route transfer attend le Boolean envoyé au replyTo par Wallet/Mempool/Validator.' , pending:true},
-  {id:'P_API_TX_REPLY_READY', lane:'API', x:1970, y:215, label:'bool reçu', desc:'Le replyTo HTTP a reçu true/false; la route peut construire la réponse HTTP.' , pending:true},
-  {id:'P_API_SUCCESS', lane:'API', x:2410, y:125, label:'201 / true', desc:'Réponse HTTP positive: wallet créé ou transaction confirmée/minée.'},
-  {id:'P_API_REJECTED', lane:'API', x:2410, y:205, label:'erreur / false', desc:'Réponse HTTP négative: conflit, 404 ou transaction refusée.'},
-  {id:'P_API_VIEW_RESPONSE', lane:'API', x:2410, y:285, label:'réponse GET', desc:'Réponse de lecture: liste, solde, pubkey, blockchain ou mempool.'},
-
   // Registry
   {id:'P_REGISTRY_READY', lane:'Registry', x:90, y:455, label:'Registry prêt', desc:'RegistryActor avec sa Map de wallets.'},
   {id:'P_REGISTRY_HAS_WALLET', lane:'Registry', x:650, y:415, label:'wallet connu', desc:'La Map contient le wallet demandé.'},
@@ -437,7 +426,6 @@ const places = [
   // DB
   {id:'P_DB_LEDGER', lane:'DB', x:90, y:1160, label:'ledger + blocks', desc:'État DBActor: lastHash, currentId, List[BlockInfo], fichier ledger.txt.'},
   {id:'P_DB_BALANCE_REQ', lane:'DB', x:670, y:1160, label:'GetBalanceAtDate', desc:'Lecture ledger.txt pour calculer le solde à timestamp donné pour un transfert.' , pending:true},
-  {id:'P_DB_BALANCE_VIEW_REQ', lane:'DB', x:980, y:1235, label:'balance GET', desc:'Requête DB.GetBalanceAtDate déclenchée par GET /balance.' , pending:true},
   {id:'P_DB_LASTBLOCK_REQ', lane:'DB', x:1410, y:1100, label:'GetLastBlock', desc:'Le validator demande DB.LastBlockInfo(lastHash,currentId).' , pending:true},
   {id:'P_LAST_BLOCK_INFO', lane:'DB', x:1710, y:1160, label:'LastBlockInfo', desc:'Dernier hash et id courant retournés au Validator.'},
   {id:'P_DB_SAVE_IN_PROGRESS', lane:'DB', x:2140, y:1160, label:'SaveBlock', desc:'Écriture du bloc dans ledger.txt via DB.SaveBlock.' , pending:true},
@@ -466,39 +454,27 @@ const places = [
 ];
 
 const transitions = [
-  // API route entry points
-  {id:'T_HTTP_CREATE_WALLET', lane:'API', x:300, y:150, label:'POST wallets', code:'Routes.scala: path("wallets") post -> Registry.CreateWallet', inputs:['P_API_READY'], outputs:[['P_API_READY','api'], ['P_API_CREATE_WALLET_REQ','req']], events:['createWalletReq'], desc:'Entrée HTTP de création de wallet.' , external:true},
-  {id:'T_HTTP_TRANSFER', lane:'API', x:300, y:215, label:'POST transfer', code:'Routes.scala: path("wallets" / Segment / "transfer") -> withWallet -> Wallet.CreateTx', inputs:['P_API_READY'], outputs:[['P_API_READY','api'], ['P_API_TRANSFER_REQ','req']], events:['transferReq'], desc:'Entrée HTTP de transfert.' , external:true},
-  {id:'T_HTTP_READ', lane:'API', x:300, y:280, label:'GET views', code:'Routes.scala: GET wallets/balance/pubkey/blockchain/mempool', inputs:['P_API_READY'], outputs:[['P_API_READY','api'], ['P_API_READ_REQ','get']], events:['readReq'], desc:'Entrée HTTP de lecture.' , external:true},
-  {id:'T_API_RETURN_SUCCESS', lane:'API', x:2210, y:125, label:'HTTP true', code:'Routes.scala: complete(TransferResponse(true, ...)) ou WalletResponse', inputs:['P_API_TX_REPLY_READY'], outputs:[['P_API_SUCCESS','200']], events:['apiSuccess'], desc:'La route HTTP reçoit true et répond succès.'},
-  {id:'T_API_RETURN_REJECTED', lane:'API', x:2210, y:205, label:'HTTP false', code:'Routes.scala: complete(TransferResponse(false, ...)) / 404 / 409', inputs:['P_API_TX_REPLY_READY'], outputs:[['P_API_REJECTED','err']], events:['apiRejected','txRejected'], desc:'La route HTTP reçoit false ou une erreur métier.'},
-
   // Registry
-  {id:'T_REGISTRY_CREATE_WALLET_SUCCESS', lane:'Registry', x:460, y:415, label:'CreateWallet ok', code:'RegistryActor.scala: ctx.spawn(WalletActor(...)); WalletCreated(name); wallets + (name -> ref)', inputs:['P_API_CREATE_WALLET_REQ','P_REGISTRY_READY'], outputs:[['P_REGISTRY_READY','reg'], ['P_REGISTRY_HAS_WALLET','wallet'], ['P_WALLET_IDLE','wallet'], ['P_API_SUCCESS','201']], events:['walletCreated'], desc:'Wallet absent: création de l’acteur WalletActor et ajout dans la Map.'},
-  {id:'T_REGISTRY_CREATE_WALLET_EXISTS', lane:'Registry', x:460, y:505, label:'CreateWallet ko', code:'RegistryActor.scala: if (wallets.contains(name)) WalletAlreadyExists', inputs:['P_API_CREATE_WALLET_REQ','P_REGISTRY_READY','P_REGISTRY_HAS_WALLET'], outputs:[['P_REGISTRY_READY','reg'], ['P_REGISTRY_HAS_WALLET','wallet'], ['P_API_REJECTED','409']], events:['walletAlreadyExists'], desc:'Wallet déjà présent: réponse Conflict.'},
-  {id:'T_REGISTRY_GET_WALLET_FOUND', lane:'Registry', x:830, y:415, label:'GetWalletRef ok', code:'RegistryActor.scala: wallets.get(name) -> WalletFound(ref)', inputs:['P_API_TRANSFER_REQ','P_REGISTRY_HAS_WALLET'], outputs:[['P_REGISTRY_HAS_WALLET','wallet'], ['P_WALLET_REF_FOUND','ref']], events:['walletFound'], desc:'Résolution positive du wallet avant transfert.'},
-  {id:'T_REGISTRY_GET_WALLET_NOT_FOUND', lane:'Registry', x:830, y:505, label:'GetWalletRef ko', code:'RegistryActor.scala: None -> WalletNotFound', inputs:['P_API_TRANSFER_REQ','P_REGISTRY_NO_WALLET'], outputs:[['P_REGISTRY_NO_WALLET','none'], ['P_WALLET_REF_NOT_FOUND','404'], ['P_API_REJECTED','404']], events:['walletNotFound','apiRejected'], desc:'Wallet absent: la route répond NotFound.'},
-  {id:'T_REGISTRY_LIST_WALLETS', lane:'Registry', x:300, y:380, label:'ListWallets', code:'RegistryActor.scala: ListWallets -> WalletsListed(wallets.keys...)', inputs:['P_API_READ_REQ','P_REGISTRY_READY'], outputs:[['P_REGISTRY_READY','reg'], ['P_API_VIEW_RESPONSE','list']], events:['viewReturned'], desc:'Lecture de la liste des wallets.'},
+  {id:'T_REGISTRY_CREATE_WALLET_SUCCESS', lane:'Registry', x:460, y:415, label:'CreateWallet ok', code:'RegistryActor.scala: ctx.spawn(WalletActor(...)); WalletCreated(name); wallets + (name -> ref)', inputs:['P_REGISTRY_READY'], outputs:[['P_REGISTRY_READY','reg'], ['P_REGISTRY_HAS_WALLET','wallet'], ['P_WALLET_IDLE','wallet']], events:['walletCreated'], desc:'Wallet absent: création de l’acteur WalletActor et ajout dans la Map.'},
+  {id:'T_REGISTRY_CREATE_WALLET_EXISTS', lane:'Registry', x:460, y:505, label:'CreateWallet ko', code:'RegistryActor.scala: if (wallets.contains(name)) WalletAlreadyExists', inputs:['P_REGISTRY_READY','P_REGISTRY_HAS_WALLET'], outputs:[['P_REGISTRY_READY','reg'], ['P_REGISTRY_HAS_WALLET','wallet']], events:['walletAlreadyExists'], desc:'Wallet déjà présent: refus local.'},
+  {id:'T_REGISTRY_GET_WALLET_FOUND', lane:'Registry', x:830, y:415, label:'GetWalletRef ok', code:'RegistryActor.scala: wallets.get(name) -> WalletFound(ref)', inputs:['P_REGISTRY_HAS_WALLET'], outputs:[['P_REGISTRY_HAS_WALLET','wallet'], ['P_WALLET_REF_FOUND','ref']], events:['walletFound'], desc:'Résolution positive du wallet avant transfert.'},
+  {id:'T_REGISTRY_GET_WALLET_NOT_FOUND', lane:'Registry', x:830, y:505, label:'GetWalletRef ko', code:'RegistryActor.scala: None -> WalletNotFound', inputs:['P_REGISTRY_NO_WALLET'], outputs:[['P_REGISTRY_NO_WALLET','none'], ['P_WALLET_REF_NOT_FOUND','404']], events:['walletNotFound'], desc:'Wallet absent: refus local.'},
 
   // Wallet
-  {id:'T_WALLET_CREATE_TX_START', lane:'Wallet', x:200, y:815, label:'CreateTx', code:'WalletActor.scala: if (!txInProgress) requestBalanceForTx; txInProgress=true', inputs:['P_WALLET_REF_FOUND','P_WALLET_IDLE'], outputs:[['P_WALLET_BUSY','busy'], ['P_WALLET_BALANCE_REQUEST','bal'], ['P_API_WAITING_TX_REPLY','ask']], events:['txCreated'], desc:'Le WalletActor commence une transaction et conserve le replyTo HTTP en attente.'},
+  {id:'T_WALLET_CREATE_TX_START', lane:'Wallet', x:200, y:815, label:'CreateTx', code:'WalletActor.scala: if (!txInProgress) requestBalanceForTx; txInProgress=true', inputs:['P_WALLET_REF_FOUND','P_WALLET_IDLE'], outputs:[['P_WALLET_BUSY','busy'], ['P_WALLET_BALANCE_REQUEST','bal']], events:['txCreated'], desc:'Le WalletActor commence une transaction et demande le solde avant signature.'},
   {id:'T_WALLET_CREATE_TX_QUEUED', lane:'Wallet', x:200, y:900, label:'queue tx', code:'WalletActor.scala: if (txInProgress) pendingTxs :+ request', inputs:['P_WALLET_BUSY'], outputs:[['P_WALLET_BUSY','busy'], ['P_WALLET_QUEUE','q']], events:['txQueued'], desc:'Une demande concurrente est ajoutée à pendingTxs.'},
   {id:'T_WALLET_GET_BALANCE_REQUEST', lane:'Wallet', x:670, y:945, label:'ask balance', code:'WalletActor.scala: ctx.self ! Wallet.GetBalance(balanceReceiver)', inputs:['P_WALLET_BALANCE_REQUEST'], outputs:[['P_DB_BALANCE_REQ','bal?']], events:['balanceRequested'], desc:'Le Wallet s’envoie GetBalance, qui déclenche DB.GetBalanceAtDate.'},
   {id:'T_DB_BALANCE_RESPONSE', lane:'DB', x:830, y:1160, label:'BalanceResponse', code:'DBActor.scala: GetBalanceAtDate -> BalanceResponse(balance)', inputs:['P_DB_BALANCE_REQ','P_DB_LEDGER'], outputs:[['P_DB_LEDGER','db'], ['P_BALANCE_RETURNED','bal']], events:['balanceReturned'], desc:'La DB calcule le solde depuis ledger.txt et répond au Wallet.'},
   {id:'T_WALLET_FUNDS_OK_BUILD_UNSIGNED', lane:'Wallet', x:1180, y:750, label:'fonds ok', code:'WalletActor.scala: if (currentBalance >= amount + fee) create UnsignedTransaction', inputs:['P_WALLET_BUSY','P_BALANCE_RETURNED'], outputs:[['P_UNSIGNED_TX','uTx']], events:['fundsOk'], desc:'Fonds suffisants: construction de UnsignedTransaction avec nonce et timestamp.'},
   {id:'T_WALLET_SIGN_SEND_MEMPOOL', lane:'Wallet', x:1510, y:815, label:'sign + AddTx', code:'WalletActor.scala: Crypto.hashTx; Crypto.sign; mempool ! Mempool.AddTx; nonce+1; initialBalance-=amount+fee', inputs:['P_UNSIGNED_TX'], outputs:[['P_SIGNED_TX_SENT','sTx'], ['P_WALLET_IDLE','idle']], events:['signed','addTxSent'], desc:'Signature RSA, envoi à la mempool et mise à jour locale du nonce/solde.'},
-  {id:'T_WALLET_FUNDS_INSUFFICIENT', lane:'Wallet', x:1180, y:930, label:'fonds ko', code:'WalletActor.scala: if (currentBalance < amount + fee) replyTo ! false; continueWithNextTx', inputs:['P_WALLET_BUSY','P_BALANCE_RETURNED','P_API_WAITING_TX_REPLY'], outputs:[['P_TX_REJECTED_LOCAL','funds'], ['P_WALLET_IDLE','idle'], ['P_API_TX_REPLY_READY','false']], events:['insufficientFunds','txRejected'], desc:'Fonds insuffisants: refus local, aucun AddTx, le replyTo HTTP reçoit false.'},
+  {id:'T_WALLET_FUNDS_INSUFFICIENT', lane:'Wallet', x:1180, y:930, label:'fonds ko', code:'WalletActor.scala: if (currentBalance < amount + fee) reject; continueWithNextTx', inputs:['P_WALLET_BUSY','P_BALANCE_RETURNED'], outputs:[['P_TX_REJECTED_LOCAL','funds'], ['P_WALLET_IDLE','idle']], events:['insufficientFunds','txRejected'], desc:'Fonds insuffisants: refus local, aucun AddTx.'},
   {id:'T_WALLET_CONTINUE_NEXT_TX', lane:'Wallet', x:500, y:900, label:'next queued', code:'WalletActor.scala: continueWithNextTx -> pendingTxs.headOption', inputs:['P_WALLET_IDLE','P_WALLET_QUEUE'], outputs:[['P_WALLET_BUSY','busy'], ['P_WALLET_BALANCE_REQUEST','bal']], events:['nextQueuedTx'], desc:'Après une transaction, le Wallet traite la suivante dans pendingTxs.'},
-  {id:'T_WALLET_GET_PUBKEY', lane:'Wallet', x:1110, y:945, label:'GetPublicKey', code:'WalletActor.scala: GetPublicKey -> walletPublicKey(state)', inputs:['P_API_READ_REQ','P_WALLET_IDLE'], outputs:[['P_WALLET_IDLE','idle'], ['P_API_VIEW_RESPONSE','pub']], events:['viewReturned'], desc:'Lecture de la clé publique.'},
-  {id:'T_WALLET_GET_BALANCE_VIEW', lane:'Wallet', x:980, y:945, label:'GET balance', code:'Routes.scala: GET /wallets/:name/balance -> Wallet.GetBalance -> DB.GetBalanceAtDate', inputs:['P_API_READ_REQ','P_WALLET_IDLE'], outputs:[['P_WALLET_IDLE','idle'], ['P_DB_BALANCE_VIEW_REQ','bal?']], events:['balanceViewRequested'], desc:'Route GET /balance autonome: le Wallet demande le solde à la DB sans créer de transaction.'},
-  {id:'T_DB_BALANCE_VIEW_RESPONSE', lane:'DB', x:1180, y:1235, label:'Balance GET ok', code:'WalletActor.scala: db adapter -> replyTo ! state.initialBalance + chainBalance; route -> BalanceResponse', inputs:['P_DB_BALANCE_VIEW_REQ','P_DB_LEDGER'], outputs:[['P_DB_LEDGER','db'], ['P_API_VIEW_RESPONSE','bal']], events:['viewReturned'], desc:'Réponse GET /balance: solde calculé et renvoyé à la route HTTP.'},
 
   // Mempool
   {id:'T_MEMPOOL_ADD_TX', lane:'Mempool', x:1870, y:1485, label:'AddTx reçu', code:'MempoolActor.scala: case Mempool.AddTx(signedTx, replyTo)', inputs:['P_SIGNED_TX_SENT'], outputs:[['P_MEMPOOL_ADD_REQ','add']], events:['addTxReceived'], desc:'La mempool reçoit une transaction signée.'},
   {id:'T_MEMPOOL_VERIFY_OK_ADD_EMPTY', lane:'Mempool', x:1870, y:1370, label:'verify ok vide', code:'MempoolActor.scala: Crypto.verify=true; updated=(PendingTx :: txs).sortBy(fees). Si txs était vide, la mempool devient non vide.', inputs:['P_MEMPOOL_ADD_REQ','P_MEMPOOL_EMPTY'], outputs:[['P_MEMPOOL_TX_PENDING','tx']], events:['signatureValid','txInMempool'], desc:'Signature valide: ajout dans une mempool vide.'},
   {id:'T_MEMPOOL_VERIFY_OK_ADD_NONEMPTY', lane:'Mempool', x:2090, y:1370, label:'verify ok +', code:'MempoolActor.scala: Crypto.verify=true; ajout possible même si txs contient déjà des transactions.', inputs:['P_MEMPOOL_ADD_REQ','P_MEMPOOL_TX_PENDING'], outputs:[['P_MEMPOOL_TX_PENDING','tx+']], events:['signatureValid','txInMempool'], desc:'Signature valide: ajout dans une mempool déjà non vide; l’état reste non vide.'},
-  {id:'T_MEMPOOL_VERIFY_INVALID', lane:'Mempool', x:1870, y:1565, label:'verify ko', code:'MempoolActor.scala: Crypto.verify(...)=false; replyTo ! false; txs inchangé', inputs:['P_MEMPOOL_ADD_REQ','P_API_WAITING_TX_REPLY'], outputs:[['P_SIGNATURE_INVALID','sig'], ['P_API_TX_REPLY_READY','false']], events:['signatureInvalid','txRejected'], desc:'Signature invalide: refus immédiat au replyTo; la mempool existante n’est pas modifiée.'},
-  {id:'T_MEMPOOL_VIEW_PENDING', lane:'Mempool', x:2240, y:1565, label:'ViewPending', code:'MempoolActor.scala: ViewPending -> PendingView(infos)', inputs:['P_API_READ_REQ'], outputs:[['P_API_VIEW_RESPONSE','view']], events:['viewReturned'], desc:'Lecture non destructive de la mempool.'},
+  {id:'T_MEMPOOL_VERIFY_INVALID', lane:'Mempool', x:1870, y:1565, label:'verify ko', code:'MempoolActor.scala: Crypto.verify(...)=false; txs inchangé', inputs:['P_MEMPOOL_ADD_REQ'], outputs:[['P_SIGNATURE_INVALID','sig']], events:['signatureInvalid','txRejected'], desc:'Signature invalide: refus immédiat; la mempool existante n’est pas modifiée.'},
 
   // Validator and DB save path
   {id:'T_VALIDATOR_START_MINING', lane:'Validator', x:240, y:1910, label:'StartMining', code:'ValidatorActor.scala: timers.startTimerWithFixedDelay(StartMining, 5.seconds); mempool ! GetTxs', inputs:['P_VALIDATOR_IDLE'], outputs:[['P_VALIDATOR_POLLING','poll']], events:['startMining'], desc:'Tick du timer: le Validator interroge la mempool.'},
@@ -511,93 +487,85 @@ const transitions = [
   {id:'T_DB_SAVE_BLOCK_REQUEST', lane:'DB', x:2140, y:1325, label:'SaveBlock', code:'ValidatorActor.scala: db ! DB.SaveBlock(newBlock, dbStatusAdapter); waitingForDbState(...)', inputs:['P_BLOCK_MINED'], outputs:[['P_DB_SAVE_IN_PROGRESS','save'], ['P_VALIDATOR_WAITING_DB','wait']], events:['dbSaveRequested','validatorWaitingDb'], desc:'Après minage, le bloc est envoyé à la DB et le validator passe en état waitingForDbState.'},
   {id:'T_DB_SAVE_SUCCESS', lane:'DB', x:2340, y:1080, label:'DB.Success', code:'DBActor.scala: Success(_) -> replyTo ! DB.Success; lastHash=current sha256(block.toString); currentId+1', inputs:['P_DB_SAVE_IN_PROGRESS','P_DB_LEDGER','P_VALIDATOR_WAITING_DB'], outputs:[['P_DB_LEDGER','db+'], ['P_BLOCK_PERSISTED','ok'], ['P_VALIDATOR_CONFIRM_TXS','ok']], events:['dbSaved'], desc:'Écriture réussie: DB.Success, mise à jour du hash/id et stockage BlockInfo.'},
   {id:'T_DB_SAVE_FAILED', lane:'DB', x:2340, y:1235, label:'DB.Failed', code:'DBActor.scala: Failure(exception) -> replyTo ! DB.Failed; Behaviors.same', inputs:['P_DB_SAVE_IN_PROGRESS','P_DB_LEDGER','P_VALIDATOR_WAITING_DB'], outputs:[['P_DB_LEDGER','db'], ['P_DB_SAVE_FAILED','ko'], ['P_VALIDATOR_REJECT_TXS','ko']], events:['dbFailed'], desc:'Échec d’écriture: la DB garde son ancien état.'},
-  {id:'T_VALIDATOR_CONFIRM_SAVED', lane:'Validator', x:2560, y:1830, label:'ConfirmSaved', code:'ValidatorActor.scala: pendingTxs.foreach(_.replyTo ! true); mempool ! RemoveTxs(...); behavior(...,List.empty)', inputs:['P_BLOCK_PERSISTED','P_VALIDATOR_CONFIRM_TXS','P_API_WAITING_TX_REPLY'], outputs:[['P_MEMPOOL_CLEANUP_REQ','rm'], ['P_API_TX_REPLY_READY','true'], ['P_VALIDATOR_IDLE','idle']], events:['txAccepted','removeRequested'], desc:'Le Validator confirme les transactions aux replyTo puis demande le nettoyage mempool.'},
-  {id:'T_VALIDATOR_SAVE_FAILED', lane:'Validator', x:2560, y:2045, label:'SaveFailed', code:'ValidatorActor.scala: pendingTxs.foreach(_.replyTo ! false); behavior(..., List.empty)', inputs:['P_DB_SAVE_FAILED','P_VALIDATOR_REJECT_TXS','P_API_WAITING_TX_REPLY'], outputs:[['P_API_TX_REPLY_READY','false'], ['P_VALIDATOR_IDLE','idle']], events:['txRejected'], desc:'Le Validator rejette les transactions mais ne déclenche pas RemoveTxs: elles restent dans la mempool.'},
+  {id:'T_VALIDATOR_CONFIRM_SAVED', lane:'Validator', x:2560, y:1830, label:'ConfirmSaved', code:'ValidatorActor.scala: pendingTxs.foreach(_.replyTo ! true); mempool ! RemoveTxs(...); behavior(...,List.empty)', inputs:['P_BLOCK_PERSISTED','P_VALIDATOR_CONFIRM_TXS'], outputs:[['P_MEMPOOL_CLEANUP_REQ','rm'], ['P_VALIDATOR_IDLE','idle']], events:['txAccepted','removeRequested'], desc:'Le Validator confirme les transactions puis demande le nettoyage mempool.'},
+  {id:'T_VALIDATOR_SAVE_FAILED', lane:'Validator', x:2560, y:2045, label:'SaveFailed', code:'ValidatorActor.scala: pendingTxs.foreach(_.replyTo ! false); behavior(..., List.empty)', inputs:['P_DB_SAVE_FAILED','P_VALIDATOR_REJECT_TXS'], outputs:[['P_VALIDATOR_IDLE','idle']], events:['txRejected'], desc:'Le Validator rejette les transactions mais ne déclenche pas RemoveTxs: elles restent dans la mempool.'},
   {id:'T_MEMPOOL_REMOVE_CONFIRMED_ALL', lane:'Mempool', x:2560, y:1445, label:'Remove all', code:'MempoolActor.scala: txs.filterNot(...). Résultat vide si toutes les transactions confirmées ont été retirées.', inputs:['P_MEMPOOL_CLEANUP_REQ','P_MEMPOOL_TX_PENDING'], outputs:[['P_MEMPOOL_CLEANED','clean'], ['P_MEMPOOL_EMPTY','empty']], events:['mempoolCleaned'], desc:'Nettoyage après DB.Success quand toutes les transactions restantes sont supprimées.'},
   {id:'T_MEMPOOL_REMOVE_CONFIRMED_PARTIAL', lane:'Mempool', x:2560, y:1545, label:'Remove partiel', code:'MempoolActor.scala: txs.filterNot(...). Des transactions non confirmées peuvent rester dans txs.', inputs:['P_MEMPOOL_CLEANUP_REQ','P_MEMPOOL_TX_PENDING'], outputs:[['P_MEMPOOL_CLEANED','clean'], ['P_MEMPOOL_TX_PENDING','rest']], events:['mempoolCleaned','mempoolStillNonEmpty'], desc:'Nettoyage après DB.Success quand il reste au moins une transaction non confirmée.'},
   {id:'T_VALIDATOR_TICK_IGNORED', lane:'Validator', x:2370, y:2045, label:'tick ignoré', code:'ValidatorActor.scala waitingForDbState: case _ => Behaviors.same', inputs:['P_VALIDATOR_WAITING_DB'], outputs:[['P_VALIDATOR_WAITING_DB','wait'], ['P_IGNORED_TICK','tick']], events:['tickIgnored'], desc:'Un StartMining reçu pendant l’attente DB est ignoré.'},
 
   // DB/read-only views
-  {id:'T_DB_GET_BLOCKCHAIN', lane:'DB', x:2570, y:1160, label:'GetAllBlocks', code:'DBActor.scala: GetAllBlocks -> BlocksData(blocks)', inputs:['P_API_READ_REQ','P_DB_LEDGER'], outputs:[['P_DB_LEDGER','db'], ['P_API_VIEW_RESPONSE','chain']], events:['viewReturned'], desc:'Lecture de la blockchain enregistrée en mémoire.'}
 ];
 
 const scenarios = [
   {
     id:'transfer_success',
-    name:'Transfert réussi : API → Wallet → Mempool → Validator → DB.Success → RemoveTxs',
+    name:'Transfert réussi : Registry → Wallet → Mempool → Validator → DB.Success → RemoveTxs',
     description:'Chemin nominal complet du code actuel. La mempool ne supprime les transactions qu’après DB.Success.',
-    initial:['P_API_READY','P_REGISTRY_READY','P_REGISTRY_HAS_WALLET','P_WALLET_IDLE','P_DB_LEDGER','P_MEMPOOL_EMPTY','P_VALIDATOR_IDLE'],
-    sequence:['T_HTTP_TRANSFER','T_REGISTRY_GET_WALLET_FOUND','T_WALLET_CREATE_TX_START','T_WALLET_GET_BALANCE_REQUEST','T_DB_BALANCE_RESPONSE','T_WALLET_FUNDS_OK_BUILD_UNSIGNED','T_WALLET_SIGN_SEND_MEMPOOL','T_MEMPOOL_ADD_TX','T_MEMPOOL_VERIFY_OK_ADD_EMPTY','T_VALIDATOR_START_MINING','T_MEMPOOL_GET_TXS_NONEMPTY','T_DB_GET_LAST_BLOCK_REQUEST','T_DB_GET_LAST_BLOCK_RESPONSE','T_MINER_START','T_MINER_PROOF_OF_WORK','T_DB_SAVE_BLOCK_REQUEST','T_DB_SAVE_SUCCESS','T_VALIDATOR_CONFIRM_SAVED','T_MEMPOOL_REMOVE_CONFIRMED_ALL','T_API_RETURN_SUCCESS']
+    initial:['P_REGISTRY_READY','P_REGISTRY_HAS_WALLET','P_WALLET_IDLE','P_DB_LEDGER','P_MEMPOOL_EMPTY','P_VALIDATOR_IDLE'],
+    sequence:['T_REGISTRY_GET_WALLET_FOUND','T_WALLET_CREATE_TX_START','T_WALLET_GET_BALANCE_REQUEST','T_DB_BALANCE_RESPONSE','T_WALLET_FUNDS_OK_BUILD_UNSIGNED','T_WALLET_SIGN_SEND_MEMPOOL','T_MEMPOOL_ADD_TX','T_MEMPOOL_VERIFY_OK_ADD_EMPTY','T_VALIDATOR_START_MINING','T_MEMPOOL_GET_TXS_NONEMPTY','T_DB_GET_LAST_BLOCK_REQUEST','T_DB_GET_LAST_BLOCK_RESPONSE','T_MINER_START','T_MINER_PROOF_OF_WORK','T_DB_SAVE_BLOCK_REQUEST','T_DB_SAVE_SUCCESS','T_VALIDATOR_CONFIRM_SAVED','T_MEMPOOL_REMOVE_CONFIRMED_ALL']
   },
   {
     id:'transfer_success_mempool_nonempty',
     name:'Transfert réussi avec mempool déjà non vide',
     description:'Cas que le code autorise: AddTx ajoute et trie même si txs contient déjà des transactions; RemoveTxs peut laisser un reste.',
-    initial:['P_API_READY','P_REGISTRY_READY','P_REGISTRY_HAS_WALLET','P_WALLET_IDLE','P_DB_LEDGER','P_MEMPOOL_TX_PENDING','P_VALIDATOR_IDLE'],
-    sequence:['T_HTTP_TRANSFER','T_REGISTRY_GET_WALLET_FOUND','T_WALLET_CREATE_TX_START','T_WALLET_GET_BALANCE_REQUEST','T_DB_BALANCE_RESPONSE','T_WALLET_FUNDS_OK_BUILD_UNSIGNED','T_WALLET_SIGN_SEND_MEMPOOL','T_MEMPOOL_ADD_TX','T_MEMPOOL_VERIFY_OK_ADD_NONEMPTY','T_VALIDATOR_START_MINING','T_MEMPOOL_GET_TXS_NONEMPTY','T_DB_GET_LAST_BLOCK_REQUEST','T_DB_GET_LAST_BLOCK_RESPONSE','T_MINER_START','T_MINER_PROOF_OF_WORK','T_DB_SAVE_BLOCK_REQUEST','T_DB_SAVE_SUCCESS','T_VALIDATOR_CONFIRM_SAVED','T_MEMPOOL_REMOVE_CONFIRMED_PARTIAL','T_API_RETURN_SUCCESS']
+    initial:['P_REGISTRY_READY','P_REGISTRY_HAS_WALLET','P_WALLET_IDLE','P_DB_LEDGER','P_MEMPOOL_TX_PENDING','P_VALIDATOR_IDLE'],
+    sequence:['T_REGISTRY_GET_WALLET_FOUND','T_WALLET_CREATE_TX_START','T_WALLET_GET_BALANCE_REQUEST','T_DB_BALANCE_RESPONSE','T_WALLET_FUNDS_OK_BUILD_UNSIGNED','T_WALLET_SIGN_SEND_MEMPOOL','T_MEMPOOL_ADD_TX','T_MEMPOOL_VERIFY_OK_ADD_NONEMPTY','T_VALIDATOR_START_MINING','T_MEMPOOL_GET_TXS_NONEMPTY','T_DB_GET_LAST_BLOCK_REQUEST','T_DB_GET_LAST_BLOCK_RESPONSE','T_MINER_START','T_MINER_PROOF_OF_WORK','T_DB_SAVE_BLOCK_REQUEST','T_DB_SAVE_SUCCESS','T_VALIDATOR_CONFIRM_SAVED','T_MEMPOOL_REMOVE_CONFIRMED_PARTIAL']
   },
   {
     id:'db_failure_retry_possible',
-    name:'Échec DB : transaction rejetée côté API mais reste en mempool',
-    description:'Branche SaveFailed fidèle au code: replyTo false, pas de RemoveTxs; la transaction reste disponible pour un tick ultérieur.',
-    initial:['P_API_READY','P_REGISTRY_READY','P_REGISTRY_HAS_WALLET','P_WALLET_IDLE','P_DB_LEDGER','P_MEMPOOL_EMPTY','P_VALIDATOR_IDLE'],
-    sequence:['T_HTTP_TRANSFER','T_REGISTRY_GET_WALLET_FOUND','T_WALLET_CREATE_TX_START','T_WALLET_GET_BALANCE_REQUEST','T_DB_BALANCE_RESPONSE','T_WALLET_FUNDS_OK_BUILD_UNSIGNED','T_WALLET_SIGN_SEND_MEMPOOL','T_MEMPOOL_ADD_TX','T_MEMPOOL_VERIFY_OK_ADD_EMPTY','T_VALIDATOR_START_MINING','T_MEMPOOL_GET_TXS_NONEMPTY','T_DB_GET_LAST_BLOCK_REQUEST','T_DB_GET_LAST_BLOCK_RESPONSE','T_MINER_START','T_MINER_PROOF_OF_WORK','T_DB_SAVE_BLOCK_REQUEST','T_DB_SAVE_FAILED','T_VALIDATOR_SAVE_FAILED','T_API_RETURN_REJECTED']
+    name:'Échec DB : transaction rejetée mais reste en mempool',
+    description:'Branche SaveFailed fidèle au code: pas de RemoveTxs; la transaction reste disponible pour un tick ultérieur.',
+    initial:['P_REGISTRY_READY','P_REGISTRY_HAS_WALLET','P_WALLET_IDLE','P_DB_LEDGER','P_MEMPOOL_EMPTY','P_VALIDATOR_IDLE'],
+    sequence:['T_REGISTRY_GET_WALLET_FOUND','T_WALLET_CREATE_TX_START','T_WALLET_GET_BALANCE_REQUEST','T_DB_BALANCE_RESPONSE','T_WALLET_FUNDS_OK_BUILD_UNSIGNED','T_WALLET_SIGN_SEND_MEMPOOL','T_MEMPOOL_ADD_TX','T_MEMPOOL_VERIFY_OK_ADD_EMPTY','T_VALIDATOR_START_MINING','T_MEMPOOL_GET_TXS_NONEMPTY','T_DB_GET_LAST_BLOCK_REQUEST','T_DB_GET_LAST_BLOCK_RESPONSE','T_MINER_START','T_MINER_PROOF_OF_WORK','T_DB_SAVE_BLOCK_REQUEST','T_DB_SAVE_FAILED','T_VALIDATOR_SAVE_FAILED']
   },
   {
     id:'insufficient_funds',
     name:'Fonds insuffisants : refus local WalletActor',
     description:'Le Wallet refuse avant signature et avant Mempool.AddTx.',
-    initial:['P_API_READY','P_REGISTRY_READY','P_REGISTRY_HAS_WALLET','P_WALLET_IDLE','P_DB_LEDGER','P_MEMPOOL_EMPTY','P_VALIDATOR_IDLE'],
-    sequence:['T_HTTP_TRANSFER','T_REGISTRY_GET_WALLET_FOUND','T_WALLET_CREATE_TX_START','T_WALLET_GET_BALANCE_REQUEST','T_DB_BALANCE_RESPONSE','T_WALLET_FUNDS_INSUFFICIENT','T_API_RETURN_REJECTED']
+    initial:['P_REGISTRY_READY','P_REGISTRY_HAS_WALLET','P_WALLET_IDLE','P_DB_LEDGER','P_MEMPOOL_EMPTY','P_VALIDATOR_IDLE'],
+    sequence:['T_REGISTRY_GET_WALLET_FOUND','T_WALLET_CREATE_TX_START','T_WALLET_GET_BALANCE_REQUEST','T_DB_BALANCE_RESPONSE','T_WALLET_FUNDS_INSUFFICIENT']
   },
   {
     id:'wallet_not_found',
-    name:'Wallet introuvable : Registry.WalletNotFound → HTTP 404',
+    name:'Wallet introuvable : Registry.WalletNotFound',
     description:'Branche withWallet négative.',
-    initial:['P_API_READY','P_REGISTRY_READY','P_REGISTRY_NO_WALLET','P_DB_LEDGER','P_MEMPOOL_EMPTY','P_VALIDATOR_IDLE'],
-    sequence:['T_HTTP_TRANSFER','T_REGISTRY_GET_WALLET_NOT_FOUND']
+    initial:['P_REGISTRY_READY','P_REGISTRY_NO_WALLET','P_DB_LEDGER','P_MEMPOOL_EMPTY','P_VALIDATOR_IDLE'],
+    sequence:['T_REGISTRY_GET_WALLET_NOT_FOUND']
   },
   {
     id:'create_wallet_success',
     name:'Création wallet réussie',
     description:'Registry spawn un WalletActor avec clés RSA générées dans WalletActor.apply.',
-    initial:['P_API_READY','P_REGISTRY_READY','P_DB_LEDGER','P_MEMPOOL_EMPTY','P_VALIDATOR_IDLE'],
-    sequence:['T_HTTP_CREATE_WALLET','T_REGISTRY_CREATE_WALLET_SUCCESS']
+    initial:['P_REGISTRY_READY','P_DB_LEDGER','P_MEMPOOL_EMPTY','P_VALIDATOR_IDLE'],
+    sequence:['T_REGISTRY_CREATE_WALLET_SUCCESS']
   },
   {
     id:'create_wallet_exists',
     name:'Création wallet déjà existant',
     description:'Registry répond WalletAlreadyExists sans créer d’acteur.',
-    initial:['P_API_READY','P_REGISTRY_READY','P_REGISTRY_HAS_WALLET','P_WALLET_IDLE','P_DB_LEDGER','P_MEMPOOL_EMPTY','P_VALIDATOR_IDLE'],
-    sequence:['T_HTTP_CREATE_WALLET','T_REGISTRY_CREATE_WALLET_EXISTS']
+    initial:['P_REGISTRY_READY','P_REGISTRY_HAS_WALLET','P_DB_LEDGER','P_MEMPOOL_EMPTY','P_VALIDATOR_IDLE'],
+    sequence:['T_REGISTRY_CREATE_WALLET_EXISTS']
   },
   {
     id:'mempool_empty_tick',
     name:'Tick de minage avec mempool vide',
     description:'StartMining déclenche GetTxs; Txs(List.empty) ne modifie pas le Validator.',
-    initial:['P_API_READY','P_REGISTRY_READY','P_DB_LEDGER','P_MEMPOOL_EMPTY','P_VALIDATOR_IDLE'],
+    initial:['P_DB_LEDGER','P_MEMPOOL_EMPTY','P_VALIDATOR_IDLE'],
     sequence:['T_VALIDATOR_START_MINING','T_MEMPOOL_GET_TXS_EMPTY']
   },
   {
     id:'tick_ignored_waiting_db',
     name:'Tick ignoré pendant waitingForDbState',
     description:'Le Validator ignore les nouveaux StartMining tant que la DB n’a pas répondu.',
-    initial:['P_API_READY','P_REGISTRY_READY','P_REGISTRY_HAS_WALLET','P_WALLET_IDLE','P_DB_LEDGER','P_MEMPOOL_EMPTY','P_VALIDATOR_IDLE'],
-    sequence:['T_HTTP_TRANSFER','T_REGISTRY_GET_WALLET_FOUND','T_WALLET_CREATE_TX_START','T_WALLET_GET_BALANCE_REQUEST','T_DB_BALANCE_RESPONSE','T_WALLET_FUNDS_OK_BUILD_UNSIGNED','T_WALLET_SIGN_SEND_MEMPOOL','T_MEMPOOL_ADD_TX','T_MEMPOOL_VERIFY_OK_ADD_EMPTY','T_VALIDATOR_START_MINING','T_MEMPOOL_GET_TXS_NONEMPTY','T_DB_GET_LAST_BLOCK_REQUEST','T_DB_GET_LAST_BLOCK_RESPONSE','T_MINER_START','T_MINER_PROOF_OF_WORK','T_DB_SAVE_BLOCK_REQUEST','T_VALIDATOR_TICK_IGNORED','T_DB_SAVE_SUCCESS','T_VALIDATOR_CONFIRM_SAVED','T_MEMPOOL_REMOVE_CONFIRMED_ALL','T_API_RETURN_SUCCESS']
+    initial:['P_REGISTRY_READY','P_REGISTRY_HAS_WALLET','P_WALLET_IDLE','P_DB_LEDGER','P_MEMPOOL_EMPTY','P_VALIDATOR_IDLE'],
+    sequence:['T_REGISTRY_GET_WALLET_FOUND','T_WALLET_CREATE_TX_START','T_WALLET_GET_BALANCE_REQUEST','T_DB_BALANCE_RESPONSE','T_WALLET_FUNDS_OK_BUILD_UNSIGNED','T_WALLET_SIGN_SEND_MEMPOOL','T_MEMPOOL_ADD_TX','T_MEMPOOL_VERIFY_OK_ADD_EMPTY','T_VALIDATOR_START_MINING','T_MEMPOOL_GET_TXS_NONEMPTY','T_DB_GET_LAST_BLOCK_REQUEST','T_DB_GET_LAST_BLOCK_RESPONSE','T_MINER_START','T_MINER_PROOF_OF_WORK','T_DB_SAVE_BLOCK_REQUEST','T_VALIDATOR_TICK_IGNORED','T_DB_SAVE_SUCCESS','T_VALIDATOR_CONFIRM_SAVED','T_MEMPOOL_REMOVE_CONFIRMED_ALL']
   },
   {
     id:'invalid_signature_actor_branch',
     name:'Signature invalide : branche Mempool.AddTx',
-    description:'Branche présente dans MempoolActor. Elle suppose une transaction corrompue ou injectée au niveau acteur, car l’API publique ne fournit pas AddTx directement.',
-    initial:['P_API_READY','P_REGISTRY_READY','P_DB_LEDGER','P_MEMPOOL_EMPTY','P_VALIDATOR_IDLE','P_MEMPOOL_ADD_REQ','P_API_WAITING_TX_REPLY'],
-    sequence:['T_MEMPOOL_VERIFY_INVALID','T_API_RETURN_REJECTED']
-  },
-  {
-    id:'read_views',
-    name:'Routes GET : wallets / balance / pubkey / blockchain / mempool',
-    description:'Scénario de lecture non destructif, incluant maintenant GET /balance.',
-    initial:['P_API_READY','P_REGISTRY_READY','P_REGISTRY_HAS_WALLET','P_WALLET_IDLE','P_DB_LEDGER','P_MEMPOOL_TX_PENDING','P_VALIDATOR_IDLE'],
-    sequence:['T_HTTP_READ','T_REGISTRY_LIST_WALLETS','T_HTTP_READ','T_WALLET_GET_BALANCE_VIEW','T_DB_BALANCE_VIEW_RESPONSE','T_HTTP_READ','T_WALLET_GET_PUBKEY','T_HTTP_READ','T_DB_GET_BLOCKCHAIN','T_HTTP_READ','T_MEMPOOL_VIEW_PENDING']
+    description:'Branche présente dans MempoolActor. Elle suppose une transaction corrompue ou injectée au niveau acteur.',
+    initial:['P_DB_LEDGER','P_MEMPOOL_EMPTY','P_VALIDATOR_IDLE','P_MEMPOOL_ADD_REQ'],
+    sequence:['T_MEMPOOL_VERIFY_INVALID']
   }
 ];
 
@@ -658,7 +626,6 @@ function reset() {
 }
 
 function initialTokenLabel(pid) {
-  if (pid.includes('API')) return 'api';
   if (pid.includes('REGISTRY')) return 'reg';
   if (pid.includes('WALLET')) return 'w';
   if (pid.includes('DB')) return 'db';
@@ -880,6 +847,7 @@ function attachTooltip(el, html) {
 
 function renderSide() {
   if (currentTab === 'state') renderStateTab();
+  else if (currentTab === 'analysis') renderAnalysisTab();
   else if (currentTab === 'ltl') renderLtlTab();
   else if (currentTab === 'deadlock') renderDeadlockTab();
   else renderMappingTab();
@@ -1056,6 +1024,514 @@ function renderLtlTab() {
   `;
 }
 
+const analysisCache = new Map();
+const analysisUiState = {
+  scenarioId: null,
+  includeExternal: true,
+  maxExternalFires: 1,
+  maxDepth: 28,
+  maxStates: 5000,
+  maxTokensPerPlace: 2,
+  maxTotalTokens: 40,
+  ignoreTickIgnored: true,
+  workflowMode: true,
+  singleRequestMode: true
+};
+
+function clampInt(value, {min, max, fallback} = {}) {
+  const n = Number.parseInt(value, 10);
+  if (!Number.isFinite(n)) return fallback;
+  if (Number.isFinite(min) && n < min) return min;
+  if (Number.isFinite(max) && n > max) return max;
+  return n;
+}
+
+function placeIdsInOrder() {
+  return places.map(p => p.id);
+}
+
+function countsFromPlaceList(placeIds) {
+  const c = {};
+  for (const pid of placeIds) c[pid] = (c[pid] || 0) + 1;
+  return c;
+}
+
+function countsKey(counts, placeOrder) {
+  return placeOrder.map(pid => String(counts[pid] || 0)).join(',');
+}
+
+function cloneCounts(counts) {
+  return Object.assign({}, counts);
+}
+
+function sumTokens(counts) {
+  let total = 0;
+  for (const v of Object.values(counts)) total += v;
+  return total;
+}
+
+function isEnabledCounts(counts, t) {
+  return t.inputs.every(pid => (counts[pid] || 0) > 0);
+}
+
+function enabledTransitionsForCounts(counts, {includeExternal = true, ignoreTransitionIds = new Set()} = {}) {
+  return transitions.filter(t => (includeExternal || !t.external) && !ignoreTransitionIds.has(t.id) && isEnabledCounts(counts, t));
+}
+
+function fireCounts(counts, t) {
+  const next = cloneCounts(counts);
+  for (const pid of t.inputs) next[pid] = (next[pid] || 0) - 1;
+  for (const [pid] of t.outputs) next[pid] = (next[pid] || 0) + 1;
+  return next;
+}
+
+function traceToState(stateKey, parents) {
+  const trace = [];
+  let k = stateKey;
+  while (parents.get(k)) {
+    const p = parents.get(k);
+    trace.push(p.tid);
+    k = p.prev;
+  }
+  trace.reverse();
+  return trace;
+}
+
+function exploreStateSpace({
+  initialPlaces,
+  includeExternal,
+  maxExternalFires,
+  maxDepth,
+  maxStates,
+  maxTokensPerPlace,
+  maxTotalTokens,
+  ignoreTransitionIds,
+  workflowMode
+}) {
+  const placeOrder = placeIdsInOrder();
+  const initialCounts = countsFromPlaceList(initialPlaces);
+  const initialKey = countsKey(initialCounts, placeOrder);
+
+  const states = new Map();
+  const parents = new Map();
+  const edges = new Map();
+  const queue = [];
+  const maxByPlace = Object.fromEntries(placeOrder.map(pid => [pid, 0]));
+
+  function updateMax(counts) {
+    for (const pid of placeOrder) {
+      const v = counts[pid] || 0;
+      if (v > maxByPlace[pid]) maxByPlace[pid] = v;
+    }
+  }
+
+  states.set(initialKey, {counts: initialCounts, depth: 0, externalFires: 0});
+  parents.set(initialKey, null);
+  queue.push({key: initialKey});
+  updateMax(initialCounts);
+
+  let edgeCount = 0;
+
+  while (queue.length && states.size < maxStates) {
+    const {key} = queue.shift();
+    const cur = states.get(key);
+    if (!cur) continue;
+    if (cur.depth >= maxDepth) continue;
+
+    const enabled = enabledTransitionsForCounts(cur.counts, {includeExternal, ignoreTransitionIds});
+    for (const t of enabled) {
+      if (t.external && cur.externalFires >= maxExternalFires) continue;
+
+      // Fairness/workflow heuristic (documented in UI): avoid irrelevant background loops
+      // that can starve a request forever in the purely nondeterministic Petri semantics.
+      if (workflowMode && t.id === 'T_VALIDATOR_START_MINING') {
+        const mempoolEmpty = (cur.counts['P_MEMPOOL_EMPTY'] || 0) > 0 && (cur.counts['P_MEMPOOL_TX_PENDING'] || 0) === 0;
+        const inFlightTx =
+          (cur.counts['P_WALLET_BUSY'] || 0) > 0 ||
+          (cur.counts['P_WALLET_BALANCE_REQUEST'] || 0) > 0 ||
+          (cur.counts['P_UNSIGNED_TX'] || 0) > 0 ||
+          (cur.counts['P_SIGNED_TX_SENT'] || 0) > 0 ||
+          (cur.counts['P_MEMPOOL_ADD_REQ'] || 0) > 0;
+        const cleanupPending = (cur.counts['P_MEMPOOL_CLEANUP_REQ'] || 0) > 0;
+        if (cleanupPending || (mempoolEmpty && inFlightTx)) continue;
+      }
+
+      const nextCounts = fireCounts(cur.counts, t);
+      const total = sumTokens(nextCounts);
+      if (total > maxTotalTokens) continue;
+
+      let tooMany = false;
+      for (const pid of placeOrder) {
+        if ((nextCounts[pid] || 0) > maxTokensPerPlace) { tooMany = true; break; }
+      }
+      if (tooMany) continue;
+
+      const nextKey = countsKey(nextCounts, placeOrder);
+      const arr = edges.get(key) || [];
+      arr.push({tid: t.id, to: nextKey, events: t.events || []});
+      edges.set(key, arr);
+      edgeCount++;
+
+      if (!states.has(nextKey)) {
+        states.set(nextKey, {
+          counts: nextCounts,
+          depth: cur.depth + 1,
+          externalFires: cur.externalFires + (t.external ? 1 : 0)
+        });
+        parents.set(nextKey, {prev: key, tid: t.id});
+        updateMax(nextCounts);
+        queue.push({key: nextKey});
+      }
+    }
+  }
+
+  // Post-analysis: deadlocks and bounds.
+  const pendingSet = new Set(places.filter(p => p.pending).map(p => p.id));
+  const internalDeadlocks = [];
+  for (const [k, st] of states.entries()) {
+    const internalEnabled = enabledTransitionsForCounts(st.counts, {includeExternal:false, ignoreTransitionIds});
+    const pendingMarked = Array.from(pendingSet).filter(pid => (st.counts[pid] || 0) > 0);
+    if (internalEnabled.length === 0 && pendingMarked.length > 0) {
+      internalDeadlocks.push({stateKey: k, pendingPlaces: pendingMarked, trace: traceToState(k, parents)});
+    }
+  }
+
+  return {
+    initialKey,
+    placeOrder,
+    states,
+    parents,
+    edges,
+    edgeCount,
+    maxByPlace,
+    internalDeadlocks
+  };
+}
+
+function checkNoImmediateEventAfter(graph, {afterEvent, forbiddenNextEvent}) {
+  for (const [from, outs] of graph.edges.entries()) {
+    for (const e1 of outs) {
+      if (!e1.events.includes(afterEvent)) continue;
+      const outs2 = graph.edges.get(e1.to) || [];
+      const bad = outs2.find(e2 => e2.events.includes(forbiddenNextEvent));
+      if (bad) {
+        const prefix = traceToState(from, graph.parents);
+        return {
+          status: 'bad',
+          detail: `Contre-exemple: après ${afterEvent}, on peut tirer immédiatement une transition contenant ${forbiddenNextEvent}.`,
+          witness: prefix.concat([e1.tid, bad.tid])
+        };
+      }
+    }
+  }
+  const triggered = Array.from(graph.edges.values()).some(outs => outs.some(e => e.events.includes(afterEvent)));
+  return triggered
+    ? {status:'ok', detail:`Aucun enchaînement immédiat ${afterEvent} -> ${forbiddenNextEvent} trouvé dans l’espace exploré.`}
+    : {status:'na', detail:`Événement ${afterEvent} jamais observé dans l’espace exploré.`};
+}
+
+function checkWaitingDbNeverEnablesStartMining(graph) {
+  const startMining = transById['T_VALIDATOR_START_MINING'];
+  if (!startMining) return {status:'na', detail:'Transition T_VALIDATOR_START_MINING introuvable.'};
+  for (const [k, st] of graph.states.entries()) {
+    if ((st.counts['P_VALIDATOR_WAITING_DB'] || 0) <= 0) continue;
+    if (isEnabledCounts(st.counts, startMining)) {
+      return {
+        status:'bad',
+        detail:'Contre-exemple: StartMining activable alors que le Validator est en waitingForDbState.',
+        witness: traceToState(k, graph.parents)
+      };
+    }
+  }
+  const seenWaiting = Array.from(graph.states.values()).some(st => (st.counts['P_VALIDATOR_WAITING_DB'] || 0) > 0);
+  return seenWaiting
+    ? {status:'ok', detail:'Aucun état waitingForDbState ne rend StartMining activable.'}
+    : {status:'na', detail:'Aucun état waitingForDbState observé dans l’espace exploré.'};
+}
+
+function checkLivenessPattern(graph, prop) {
+  const triggerSet = new Set(prop.triggers || []);
+  const targetSet = new Set(prop.targetAny || []);
+  const start = graph.initialKey + '|0';
+  const seen = new Set([start]);
+  const parent = new Map();
+  const queue = [start];
+
+  function splitNode(nk) {
+    const idx = nk.lastIndexOf('|');
+    return {stateKey: nk.slice(0, idx), pending: Number(nk.slice(idx + 1))};
+  }
+  function nextPending(pending, events) {
+    const hasTarget = events.some(e => targetSet.has(e));
+    if (hasTarget) return 0;
+    const hasTrigger = events.some(e => triggerSet.has(e));
+    if (hasTrigger) return 1;
+    return pending;
+  }
+
+  let triggerObserved = false;
+  while (queue.length) {
+    const nk = queue.shift();
+    const {stateKey, pending} = splitNode(nk);
+    const outs = graph.edges.get(stateKey) || [];
+    for (const e of outs) {
+      if (e.events.some(ev => triggerSet.has(ev))) triggerObserved = true;
+      const np = nextPending(pending, e.events);
+      const nnk = e.to + '|' + np;
+      if (!seen.has(nnk)) {
+        seen.add(nnk);
+        parent.set(nnk, {prev: nk, tid: e.tid});
+        queue.push(nnk);
+      }
+    }
+  }
+
+  if (!triggerObserved) {
+    return {status:'na', detail:'Déclencheur jamais observé dans l’espace exploré.'};
+  }
+
+  // Build adjacency restricted to pending=1 nodes.
+  const pendingNodes = Array.from(seen).filter(nk => nk.endsWith('|1'));
+  const pendingSetNodes = new Set(pendingNodes);
+  const adj = new Map();
+  for (const nk of pendingNodes) {
+    const {stateKey} = splitNode(nk);
+    const outs = graph.edges.get(stateKey) || [];
+    const list = [];
+    for (const e of outs) {
+      const np = nextPending(1, e.events);
+      if (np !== 1) continue;
+      const nnk = e.to + '|1';
+      if (!pendingSetNodes.has(nnk)) continue;
+      list.push({to: nnk, tid: e.tid});
+    }
+    adj.set(nk, list);
+  }
+
+  // DFS cycle detection in pending subgraph.
+  const color = new Map();
+  const dfsParent = new Map();
+  let cycleStart = null;
+  let cycleEdge = null;
+
+  function dfs(u) {
+    color.set(u, 1);
+    for (const e of (adj.get(u) || [])) {
+      const v = e.to;
+      if (!color.has(v)) {
+        dfsParent.set(v, {prev: u, tid: e.tid});
+        if (dfs(v)) return true;
+      } else if (color.get(v) === 1) {
+        cycleStart = v;
+        cycleEdge = {from: u, to: v, tid: e.tid};
+        return true;
+      }
+    }
+    color.set(u, 2);
+    return false;
+  }
+
+  for (const n of pendingNodes) {
+    if (color.has(n)) continue;
+    if (dfs(n)) break;
+  }
+
+  if (!cycleStart) {
+    return {status:'ok', detail:'Aucun cycle sans conséquence trouvé: la propriété tient sur l’espace exploré (sans hypothèse de justice supplémentaire).'};
+  }
+
+  // Reconstruct cycle transitions.
+  const cycleTids = [cycleEdge.tid];
+  let cur = cycleEdge.from;
+  while (cur !== cycleStart) {
+    const p = dfsParent.get(cur);
+    if (!p) break;
+    cycleTids.push(p.tid);
+    cur = p.prev;
+  }
+  cycleTids.reverse();
+
+  // Reconstruct prefix from initial to cycleStart.
+  const prefixTids = [];
+  let nk = cycleStart;
+  while (parent.get(nk)) {
+    const p = parent.get(nk);
+    prefixTids.push(p.tid);
+    nk = p.prev;
+  }
+  prefixTids.reverse();
+
+  return {
+    status: 'bad',
+    detail: 'Il existe une exécution (cycle) où un déclencheur survient mais où la conséquence n’arrive jamais ensuite.',
+    witness: prefixTids.concat(cycleTids)
+  };
+}
+
+function analyzeStateSpace(graph) {
+  const results = [];
+  for (const p of ltlProperties) {
+    if (p.custom === 'dbFailedNoImmediateClean') {
+      results.push({id:p.id, formula:p.formula, meaning:p.meaning, ...checkNoImmediateEventAfter(graph, {afterEvent:'dbFailed', forbiddenNextEvent:'mempoolCleaned'})});
+      continue;
+    }
+    if (p.custom === 'waitingDbIgnoresTick') {
+      results.push({id:p.id, formula:p.formula, meaning:p.meaning, ...checkWaitingDbNeverEnablesStartMining(graph)});
+      continue;
+    }
+    results.push({id:p.id, formula:p.formula, meaning:p.meaning, ...checkLivenessPattern(graph, p)});
+  }
+  return results;
+}
+
+function renderAnalysisTab() {
+  if (!analysisUiState.scenarioId) analysisUiState.scenarioId = scenario.id;
+  const cachedKey = JSON.stringify(analysisUiState);
+  const cached = analysisCache.get(cachedKey);
+
+  sideContent.innerHTML = `
+    <div class="card">
+      <h2>Exploration d’espace d’états (bornée)</h2>
+      <p>Objectif: explorer automatiquement les marquages atteignables et vérifier des propriétés (deadlocks, bornes, LTL sur événements). Le modèle est abstrait: on borne volontairement la profondeur et le nombre d’actions externes.</p>
+      <table class="small-table"><tbody>
+        <tr><td><b>Scénario initial</b></td><td>
+          <select id="analysisScenario" style="width:100%"></select>
+        </td></tr>
+        <tr><td><b>Inclure externe</b></td><td>
+          <label><input type="checkbox" id="analysisIncludeExternal" /> autoriser les transitions externes</label>
+        </td></tr>
+        <tr><td><b>Max actions externes</b></td><td><input id="analysisMaxExternal" type="number" min="0" max="10" style="width:100%" /></td></tr>
+        <tr><td><b>Profondeur max</b></td><td><input id="analysisMaxDepth" type="number" min="0" max="200" style="width:100%" /></td></tr>
+        <tr><td><b>États max</b></td><td><input id="analysisMaxStates" type="number" min="50" max="50000" style="width:100%" /></td></tr>
+        <tr><td><b>Tokens max/place</b></td><td><input id="analysisMaxTokensPerPlace" type="number" min="1" max="10" style="width:100%" /></td></tr>
+        <tr><td><b>Tokens max total</b></td><td><input id="analysisMaxTotalTokens" type="number" min="1" max="200" style="width:100%" /></td></tr>
+        <tr><td><b>Fairness (simple)</b></td><td>
+          <label><input type="checkbox" id="analysisIgnoreTickIgnored" /> ignorer T_VALIDATOR_TICK_IGNORED (évite des boucles purement temporelles)</label>
+        </td></tr>
+        <tr><td><b>Mode exécution réaliste</b></td><td>
+          <label><input type="checkbox" id="analysisWorkflowMode" /> éviter les interleavings « non réalistes » (ex: tick validator infini pendant qu’une tx est en cours)</label>
+        </td></tr>
+        <tr><td><b>Mode 1 requête</b></td><td>
+          <label><input type="checkbox" id="analysisSingleRequestMode" /> ignorer la concurrence Wallet (pendingTxs) pendant l’exploration</label>
+        </td></tr>
+      </tbody></table>
+      <div class="pill-row">
+        <button id="runAnalysisBtn" class="primary">Lancer l’analyse</button>
+      </div>
+    </div>
+    ${cached ? renderAnalysisResults(cached) : ''}
+  `;
+
+  const sel = document.getElementById('analysisScenario');
+  scenarios.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = s.name;
+    sel.appendChild(opt);
+  });
+  sel.value = analysisUiState.scenarioId;
+
+  document.getElementById('analysisIncludeExternal').checked = analysisUiState.includeExternal;
+  document.getElementById('analysisMaxExternal').value = String(analysisUiState.maxExternalFires);
+  document.getElementById('analysisMaxDepth').value = String(analysisUiState.maxDepth);
+  document.getElementById('analysisMaxStates').value = String(analysisUiState.maxStates);
+  document.getElementById('analysisMaxTokensPerPlace').value = String(analysisUiState.maxTokensPerPlace);
+  document.getElementById('analysisMaxTotalTokens').value = String(analysisUiState.maxTotalTokens);
+  document.getElementById('analysisIgnoreTickIgnored').checked = analysisUiState.ignoreTickIgnored;
+  document.getElementById('analysisWorkflowMode').checked = analysisUiState.workflowMode;
+  document.getElementById('analysisSingleRequestMode').checked = analysisUiState.singleRequestMode;
+
+  document.getElementById('runAnalysisBtn').addEventListener('click', () => {
+    analysisUiState.scenarioId = sel.value;
+    analysisUiState.includeExternal = document.getElementById('analysisIncludeExternal').checked;
+    analysisUiState.maxExternalFires = clampInt(document.getElementById('analysisMaxExternal').value, {min:0, max:10, fallback:1});
+    analysisUiState.maxDepth = clampInt(document.getElementById('analysisMaxDepth').value, {min:0, max:200, fallback:28});
+    analysisUiState.maxStates = clampInt(document.getElementById('analysisMaxStates').value, {min:50, max:50000, fallback:5000});
+    analysisUiState.maxTokensPerPlace = clampInt(document.getElementById('analysisMaxTokensPerPlace').value, {min:1, max:10, fallback:2});
+    analysisUiState.maxTotalTokens = clampInt(document.getElementById('analysisMaxTotalTokens').value, {min:1, max:200, fallback:40});
+    analysisUiState.ignoreTickIgnored = document.getElementById('analysisIgnoreTickIgnored').checked;
+    analysisUiState.workflowMode = document.getElementById('analysisWorkflowMode').checked;
+    analysisUiState.singleRequestMode = document.getElementById('analysisSingleRequestMode').checked;
+
+    const ignore = new Set();
+    if (analysisUiState.ignoreTickIgnored) ignore.add('T_VALIDATOR_TICK_IGNORED');
+    if (analysisUiState.singleRequestMode) {
+      ignore.add('T_WALLET_CREATE_TX_QUEUED');
+      ignore.add('T_WALLET_CONTINUE_NEXT_TX');
+    }
+    const s = scenarios.find(x => x.id === analysisUiState.scenarioId) || scenarios[0];
+    const g = exploreStateSpace({
+      initialPlaces: s.initial,
+      includeExternal: analysisUiState.includeExternal,
+      maxExternalFires: analysisUiState.maxExternalFires,
+      maxDepth: analysisUiState.maxDepth,
+      maxStates: analysisUiState.maxStates,
+      maxTokensPerPlace: analysisUiState.maxTokensPerPlace,
+      maxTotalTokens: analysisUiState.maxTotalTokens,
+      ignoreTransitionIds: ignore,
+      workflowMode: analysisUiState.workflowMode
+    });
+    g.propertyResults = analyzeStateSpace(g);
+
+    analysisCache.set(JSON.stringify(analysisUiState), g);
+    renderAnalysisTab();
+  });
+}
+
+function renderAnalysisResults(graph) {
+  const deadlocks = graph.internalDeadlocks || [];
+  const maxPlaces = Object.entries(graph.maxByPlace || {})
+    .filter(([, v]) => v > 0)
+    .sort((a,b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([pid, v]) => `<tr><td>${pid}</td><td>${placeById[pid]?.label || ''}</td><td>${v}</td></tr>`)
+    .join('');
+
+  const propRows = (graph.propertyResults || []).map(r => {
+    const cls = r.status === 'ok' ? 'ok' : r.status === 'bad' ? 'bad' : r.status === 'pending' ? 'pending' : 'na';
+    const label = r.status === 'ok' ? 'ok' : r.status === 'bad' ? 'violée' : r.status === 'pending' ? 'attente' : 'n/a';
+    const witness = r.witness ? `<div class="code-ref">Trace: ${r.witness.join(' → ')}</div>` : '';
+    return `<div class="ltl-row">
+      <div class="ltl-head"><div class="formula">${r.id}. ${r.formula}</div><span class="status ${cls}">${label}</span></div>
+      <p>${r.meaning}</p>
+      <p>${r.detail}</p>
+      ${witness}
+    </div>`;
+  }).join('');
+
+  const deadlockPreview = deadlocks.slice(0, 2).map(d => {
+    const placesTxt = d.pendingPlaces.join(', ');
+    const traceTxt = (d.trace || []).join(' → ') || '—';
+    return `<tr><td>${placesTxt}</td><td><div class="code-ref">${traceTxt}</div></td></tr>`;
+  }).join('');
+
+  return `
+    <div class="card">
+      <h2>Résultats</h2>
+      <div class="pill-row">
+        <span class="pill">États: <b>${graph.states.size}</b></span>
+        <span class="pill">Arcs: <b>${graph.edgeCount}</b></span>
+        <span class="pill ${deadlocks.length ? 'bad' : 'ok'}">deadlocks internes: <b>${deadlocks.length}</b></span>
+      </div>
+      <p>Un « deadlock interne » = aucune transition interne activable alors qu’une place pending contient un token (une requête est en attente sans progression possible).</p>
+    </div>
+    <div class="card">
+      <h2>Bornes observées (top places)</h2>
+      ${maxPlaces ? `<table class="small-table"><thead><tr><th>Place</th><th>Label</th><th>max</th></tr></thead><tbody>${maxPlaces}</tbody></table>` : '<p>Aucune place marquée.</p>'}
+      <p>Ces bornes sont celles observées sur l’espace exploré (borné), pas une preuve structurelle globale.</p>
+    </div>
+    <div class="card">
+      <h2>Deadlocks internes (aperçu)</h2>
+      ${deadlocks.length ? `<table class="small-table"><thead><tr><th>Places pending</th><th>Trace témoin</th></tr></thead><tbody>${deadlockPreview}</tbody></table>` : '<p>Aucun deadlock interne trouvé dans l’espace exploré.</p>'}
+    </div>
+    <div class="card">
+      <h2>Vérification LTL sur l’espace exploré</h2>
+      <p>Les résultats ci-dessous sont relatifs aux bornes choisies (profondeur, nombre d’actions externes) et à l’abstraction (pas de valeurs numériques).</p>
+    </div>
+    ${propRows}
+  `;
+}
+
 function renderDeadlockTab() {
   const enabled = enabledTransitions({includeExternal:false});
   const pendingPlaces = places.filter(p => p.pending && hasToken(p.id));
@@ -1105,9 +1581,9 @@ function renderMappingTab() {
   sideContent.innerHTML = `
     <div class="card">
       <h2>Correspondance avec le backend Scala</h2>
-      <p>Le modèle représente le flux de contrôle des acteurs et messages utilisés par l’API. Il corrige les états intermédiaires fantômes: l’attente HTTP, le batch mempool, GetLastBlock, le minage et SaveBlock sont maintenant consommés par les transitions suivantes.</p>
-      <p>Les valeurs métier ne sont pas calculées dans ce réseau: montants, fees, nonce, hash, signatures réelles et solde final sont représentés par des événements abstraits. DB.AppendBlock et Wallet.GetPrivateKey existent dans les protocoles mais ne sont pas exposés dans le flux API principal modélisé.</p>
-      <div class="pill-row"><span class="pill ok">GetTxs non destructif</span><span class="pill ok">RemoveTxs après DB.Success</span><span class="pill ok">GET /balance modélisé</span><span class="pill ok">mempool non vide supportée</span><span class="pill warn">SaveFailed garde la mempool</span><span class="pill warn">LTL sur traces</span></div>
+      <p>Le modèle représente le flux de contrôle des acteurs et messages du backend. Il corrige les états intermédiaires fantômes: l’attente mempool, le batch, GetLastBlock, le minage et SaveBlock sont maintenant consommés par les transitions suivantes.</p>
+      <p>Les valeurs métier ne sont pas calculées dans ce réseau: montants, fees, nonce, hash, signatures réelles et solde final sont représentés par des événements abstraits. DB.AppendBlock et Wallet.GetPrivateKey existent dans les protocoles mais restent hors du flux principal modélisé.</p>
+      <div class="pill-row"><span class="pill ok">GetTxs non destructif</span><span class="pill ok">RemoveTxs après DB.Success</span><span class="pill ok">mempool non vide supportée</span><span class="pill warn">SaveFailed garde la mempool</span><span class="pill warn">LTL sur traces</span></div>
     </div>
     ${groups}
   `;

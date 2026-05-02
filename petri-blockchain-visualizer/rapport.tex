@@ -1,0 +1,146 @@
+% Rapport (LaTeX) — Réseau de Pétri + LTL pour la blockchain Scala/Akka
+% Compilation: pdflatex rapport.tex (2 fois si besoin)
+
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[a4paper,margin=2.2cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[french]{babel}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{enumitem}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  urlcolor=blue,
+  citecolor=blue
+}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  columns=fullflexible,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{black!20},
+  backgroundcolor=\color{black!2}
+}
+
+\title{Vérification formelle légère d'une blockchain Akka/Scala\\\large Réseau de Pétri + propriétés LTL}
+\author{(à compléter)}
+\date{2 mai 2026}
+
+\begin{document}
+\maketitle
+
+\section{Résumé du sujet (en 10 lignes)}
+
+Le projet consiste à : (1) implémenter une simulation de blockchain distribuée en \textbf{Scala} avec \textbf{Akka Typed} (acteurs + messages), (2) produire un \textbf{modèle formel} de son comportement critique via un \textbf{Réseau de Pétri}, (3) \textbf{explorer l'espace d'états} pour détecter des deadlocks et valider des invariants, (4) formaliser des propriétés de sûreté/vivacité en \textbf{LTL} et les vérifier, et (5) expliquer la \textbf{correspondance modèle ↔ code} et comparer le modèle à l'exécution réelle.
+
+\section{Système réel (Akka Typed) : architecture et flux}\label{sec:akka}
+
+Le système est organisé autour de 5 acteurs : \texttt{RegistryActor}, \texttt{WalletActor}, \texttt{MempoolActor}, \texttt{ValidatorActor} et \texttt{DBActor}. Les messages critiques modélisés sont : \texttt{CreateWallet}, \texttt{CreateTx}, \texttt{AddTx}, \texttt{GetTxs}, \texttt{GetLastBlock}, \texttt{Mine}, \texttt{SaveBlock}, \texttt{RemoveTxs}. L'API HTTP déclenche ces messages via \texttt{Routes.scala}.
+
+\paragraph{Chemin nominal (transfert)}
+\begin{enumerate}[leftmargin=*]
+  \item L'API reçoit \texttt{POST /transfer} et résout le wallet via \texttt{RegistryActor}.
+  \item \texttt{WalletActor} vérifie le solde (requête à \texttt{DBActor}), signe et envoie \texttt{AddTx} à la mempool.
+  \item Toutes les 5s, \texttt{ValidatorActor} récupère le top-2 (fees), mine un bloc (PoW) et demande la persistance.
+  \item Si \texttt{DB.Success} : confirmation replyTo + \texttt{RemoveTxs}. Si \texttt{DB.Failed} : replyTo \texttt{false} et la mempool n'est pas nettoyée.
+\end{enumerate}
+
+\section{Modèle Réseau de Pétri : support et abstraction}\label{sec:petri}
+
+Le modèle est fourni sous forme exécutable dans \texttt{petri-blockchain-visualizer/index.html}. Il contient :
+\begin{itemize}[leftmargin=*]
+  \item des \textbf{places} (états) : par exemple \texttt{API attend bool}, \texttt{mempool vide/non vide}, \texttt{waiting DB}, etc.\ ;
+  \item des \textbf{transitions} (événements/messages) : par exemple \texttt{AddTx}, \texttt{GetTxs}, \texttt{DB.Success/Failed}, \texttt{RemoveTxs}.\ ;
+  \item une \textbf{correspondance code ↔ transition} (onglet \emph{Code}), qui pointe vers l'élément Scala modélisé.
+\end{itemize}
+
+\paragraph{Abstraction assumée}
+Le modèle vise le \textbf{flux de contrôle} (ordonnancement des étapes) et non la précision des valeurs : montants, nonce, hash, cryptographie et cardinalité exacte des transactions sont abstraits. Les choix de données (ex : \texttt{initialBalance < 0}) sont représentés par des \textbf{branches non déterministes}.
+
+\section{Vérification : scénarios, LTL et exploration d'espace d'états}\label{sec:verif}
+
+\subsection{Vérification sur traces (scénarios)}
+
+Le visualiseur propose des scénarios (séquences de transitions) et un onglet \emph{LTL} qui évalue des formules sur la trace observée. C'est une validation par \textbf{témoins} (utile pour la démo et la cohérence avec le code).
+
+\subsection{Exploration d'espace d'états (bornée) + vérification LTL}
+
+L'onglet \emph{Analyse} implémente un explorateur de marquages (BFS) et un vérificateur de propriétés sur l'espace exploré.
+
+\paragraph{Configuration (par défaut dans l'onglet Analyse)}
+\begin{itemize}[leftmargin=*]
+  \item Profondeur max : 28\ ; États max : 5000\ ; Tokens max/place : 2\ ; Tokens max total : 40.
+  \item \textbf{Max actions externes HTTP} : 1 (on analyse une requête représentative).
+  \item \textbf{Fairness simple} : on ignore \texttt{T\_VALIDATOR\_TICK\_IGNORED} (évite des boucles purement temporelles).
+  \item \textbf{Mode exécution réaliste} : on évite certains interleavings qui « starvent » une requête (heuristique documentée dans l'UI).
+  \item \textbf{Mode 1 requête} : on ignore la concurrence \texttt{pendingTxs} du Wallet pendant l'exploration.
+\end{itemize}
+
+\paragraph{Deadlock interne}
+On définit un \emph{deadlock interne} comme : \emph{aucune transition interne activable alors qu'une place \texttt{pending} est marquée}. Cela correspond à une requête en attente sans possibilité de progression côté système (sans action utilisateur externe).
+
+\paragraph{Résultats (exemple : scénario \texttt{transfer\_success}, config par défaut)}
+\begin{itemize}[leftmargin=*]
+  \item Nombre d'états explorés : \textbf{121}\ ; nombre d'arcs : \textbf{211}.\newline
+  \item Deadlocks internes trouvés : \textbf{0}.
+  \item Statut des propriétés LTL (sur l'espace exploré) : \textbf{L1--L8 = OK}.
+\end{itemize}
+
+\subsection{Propriétés LTL (sur événements)}
+
+On utilise des événements atomiques (ex: \texttt{txCreated}, \texttt{dbSaved}, \texttt{mempoolCleaned}) attachés aux transitions.
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{L1} : $G(\texttt{txCreated} \to F(\texttt{txAccepted} \lor \texttt{txRejected}))$
+  \item \textbf{L2} : $G(\texttt{blockMined} \to F(\texttt{dbSaved} \lor \texttt{dbFailed}))$
+  \item \textbf{L3} : $G(\texttt{dbSaved} \to F(\texttt{mempoolCleaned}))$
+  \item \textbf{L4} : $G(\texttt{dbFailed} \to F(\texttt{txRejected}))$
+  \item \textbf{L5} : $G(\texttt{insufficientFunds} \to F(\texttt{txRejected}))$
+  \item \textbf{L6} : $G(\texttt{signatureInvalid} \to F(\texttt{txRejected}))$
+  \item \textbf{L7} : $G(\texttt{dbFailed} \to X(\lnot\texttt{mempoolCleaned}))$
+  \item \textbf{L8} : $G(\texttt{validatorWaitingDb} \to X(\lnot\texttt{startMining} \lor \texttt{tickIgnored}))$
+\end{itemize}
+
+\section{Comparaison modèle ↔ exécution réelle}\label{sec:compare}
+
+La comparaison se fait par \textbf{alignement des étapes} :
+\begin{itemize}[leftmargin=*]
+  \item Dans Akka, les messages correspondent aux transitions (ex : \texttt{Mempool.GetTxs} ↔ \texttt{T\_MEMPOOL\_GET\_TXS\_*}).
+  \item Les états internes (ex : \emph{waitingForDbState}) correspondent à des places (ex : \texttt{P\_VALIDATOR\_WAITING\_DB}).
+  \item La séquence observée en logs (ou via le scénario terminal) correspond au scénario \texttt{transfer\_success} côté Petri.
+\end{itemize}
+
+\section{Limites et hypothèses}\label{sec:limits}
+
+\begin{itemize}[leftmargin=*]
+  \item Les valeurs numériques ne sont pas modélisées (invariant \emph{solde jamais négatif} capturé via le contrôle : \texttt{insufficientFunds} ⇒ rejet).
+  \item L'exploration d'espace d'états est \textbf{bornée} (BMC) et utilise des heuristiques de fairness pour rester représentative d'une exécution Akka.
+  \item La concurrence Wallet \texttt{pendingTxs} est désactivée en mode « 1 requête » pour vérifier proprement les propriétés d'un cycle transactionnel.
+\end{itemize}
+
+\section{Bibliographie minimale}
+
+\begin{thebibliography}{9}
+  \bibitem{murata}
+  T. Murata, \emph{Petri Nets: Properties, Analysis and Applications}, Proceedings of the IEEE, 1989.
+
+  \bibitem{reisig}
+  W. Reisig, \emph{Understanding Petri Nets}, Springer, 2013.
+
+  \bibitem{baierkatoen}
+  C. Baier, J.-P. Katoen, \emph{Principles of Model Checking}, MIT Press, 2008.
+
+  \bibitem{lamport}
+  L. Lamport, \emph{The Temporal Logic of Actions}, ACM TOPLAS, 1994.
+
+  \bibitem{akka}
+  Documentation Akka Typed, \url{https://doc.akka.io/}.
+\end{thebibliography}
+
+\end{document}
