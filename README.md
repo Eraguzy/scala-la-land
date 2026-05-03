@@ -22,31 +22,31 @@ Two run modes are available:
 ## Architecture
 
 ```
-                         ┌─────────────────────────────────┐
-                         │         Akka Actor System        │
+                         ┌───────────────────────────────────┐
+                         │         Akka Actor System         │
                          │                                   │
-  HTTP Request           │  ┌─────────────┐                 │
-──────────────────►      │  │  Registry   │  spawns         │
+  HTTP Request           │  ┌─────────────┐                  │
+──────────────────►      │  │  Registry   │  spawns          │
   (Routes.scala)         │  │   Actor     │──────────►  WalletActor × N
-                         │  └─────────────┘                 │
+                         │  └─────────────┘                  │
                          │         │ CreateTx                │
                          │         ▼                         │
-                         │  ┌─────────────┐  GetTxs         │
+                         │  ┌─────────────┐  GetTxs          │
                          │  │   Mempool   │◄────────────────►│
-                         │  │   Actor     │  (Priority Queue) │
-                         │  └─────────────┘                 │
+                         │  │   Actor     │  (Priority Queue)│
+                         │  └─────────────┘                  │
                          │         │ Txs                     │
                          │         ▼                         │
                          │  ┌─────────────┐  SaveBlock       │
                          │  │  Validator  │─────────────────►│
                          │  │   Actor     │  (every 5s)      │
-                         │  └─────────────┘                 │
+                         │  └─────────────┘                  │
                          │         │ GetLastBlock            │
                          │         ▼                         │
-                         │  ┌─────────────┐                 │
+                         │  ┌─────────────┐                  │
                          │  │   DB Actor  │──► ledger.txt    │
-                         │  └─────────────┘                 │
-                         └─────────────────────────────────┘
+                         │  └─────────────┘                  │
+                         └───────────────────────────────────┘
 ```
 
 ---
