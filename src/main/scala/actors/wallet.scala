@@ -60,7 +60,11 @@ object WalletActor {
               Behaviors.stopped
             }
           )
-          db ! DB.GetBalanceAtDate(walletPublicKey(state), System.currentTimeMillis(), balanceReplyAdapter)
+          db ! DB.GetBalanceAtDate(
+            walletPublicKey(state),
+            System.currentTimeMillis(),
+            balanceReplyAdapter
+          )
           Behaviors.same
 
         case Wallet.GetPublicKey(replyTo) =>
@@ -82,21 +86,27 @@ object WalletActor {
             behavior(state.copy(txInProgress = true), mempool, db, pendingTxs)
           }
 
-        case Wallet.CreateTxInternal(to, amount, fee, currentBalance, replyTo) =>
+        case Wallet.CreateTxInternal(
+              to,
+              amount,
+              fee,
+              currentBalance,
+              replyTo
+            ) =>
           if (currentBalance < amount + fee) {
             ctx.log.error(s"wallet ${state.name}: insufficient funds")
             replyTo ! false
             continueWithNextTx(ctx, state, mempool, db, pendingTxs)
           } else {
             val unsigned = UnsignedTransaction(
-              from      = walletPublicKey(state),
-              to        = to,
-              amount    = amount,
-              fees      = fee,
-              nonce     = state.nonce + 1,
+              from = walletPublicKey(state),
+              to = to,
+              amount = amount,
+              fees = fee,
+              nonce = state.nonce + 1,
               timestamp = System.currentTimeMillis()
             )
-            val txHash    = Crypto.hashTx(unsigned)
+            val txHash = Crypto.hashTx(unsigned)
             val signature = Crypto.sign(txHash, state.n, state.privInt)
 
             if (signature.isEmpty) {
@@ -105,14 +115,12 @@ object WalletActor {
               continueWithNextTx(ctx, state, mempool, db, pendingTxs)
             } else {
               val signed = SignedTransaction(unsigned, txHash, signature.get)
-              ctx.log.info(s"wallet ${state.name}: TX $txHash signed and sent to mempool.")
+              ctx.log.info(
+                s"wallet ${state.name}: TX $txHash signed and sent to mempool."
+              )
               mempool ! Mempool.AddTx(signed, replyTo)
 
-              // deduct locally right away so the next queued tx sees the updated balance
-              val newState = state.copy(
-                initialBalance = state.initialBalance - amount - fee,
-                nonce          = state.nonce + 1
-              )
+              val newState = state.copy(nonce = state.nonce + 1)
               continueWithNextTx(ctx, newState, mempool, db, pendingTxs)
             }
           }
@@ -127,7 +135,13 @@ object WalletActor {
   ): Unit = {
     val balanceReceiver = ctx.spawnAnonymous(
       Behaviors.receiveMessage[BigInt] { balance =>
-        ctx.self ! Wallet.CreateTxInternal(request.to, request.amount, request.fee, balance, request.replyTo)
+        ctx.self ! Wallet.CreateTxInternal(
+          request.to,
+          request.amount,
+          request.fee,
+          balance,
+          request.replyTo
+        )
         Behaviors.stopped
       }
     )
@@ -149,6 +163,8 @@ object WalletActor {
         behavior(state.copy(txInProgress = false), mempool, db, pendingTxs)
     }
 
-  private def walletPublicKey(state: State): String  = s"${state.n}-${state.pubInt}"
-  private def walletPrivateKey(state: State): String = s"${state.n}-${state.privInt}"
+  private def walletPublicKey(state: State): String =
+    s"${state.n}-${state.pubInt}"
+  private def walletPrivateKey(state: State): String =
+    s"${state.n}-${state.privInt}"
 }
