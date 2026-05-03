@@ -1,0 +1,762 @@
+% Rapport LaTeX -- Réseau de Pétri + LTL pour la blockchain Scala/Akka
+% Compilation: pdflatex rapport.tex (2 fois si besoin)
+
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[a4paper,margin=2.2cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[french]{babel}
+\usepackage{lmodern}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{enumitem}
+\usepackage{amsmath,amssymb}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{tabularx}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  urlcolor=blue,
+  citecolor=blue
+}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  columns=fullflexible,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{black!20},
+  backgroundcolor=\color{black!2}
+}
+
+\setlist[itemize]{leftmargin=*}
+\setlist[enumerate]{leftmargin=*}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.45em}
+\sloppy
+
+% Colonnes de tableau compatibles avec les compilateurs LaTeX anciens.
+% Le type L évite la justification complète dans les colonnes étroites.
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\setlength{\tabcolsep}{3pt}
+
+% Code inline simple et compatible.
+% La taille réduite évite les chevauchements dans les tableaux avec de longs identifiants.
+\newcommand{\code}[1]{\ifmmode\text{\ttfamily\footnotesize\detokenize{#1}}\else{\ttfamily\footnotesize\detokenize{#1}}\fi}
+\newcommand{\atom}[1]{\mathsf{#1}}
+\newcommand{\ok}{\textbf{OK}}
+\newcommand{\warn}{\textbf{À discuter}}
+\newcommand{\bad}{\textbf{Violation}}
+
+\title{Vérification formelle légère d'une blockchain Akka/Scala\\\large Réseau de Pétri, invariants et propriétés LTL}
+\author{
+Allaguillemette Tom \and
+Vinkovic Matias \and
+Chekhab Elias \and
+Ouguerd Ayman \and
+Saghir Louaye
+}
+\date{Mai 2026}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+\section{Résumé}
+
+Ce rapport présente une vérification formelle légère d'une simulation de blockchain écrite en Scala avec Akka Typed. Le système réel est un backend distribué par acteurs : un registre gère les wallets, les wallets créent et signent les transactions, la mempool stocke les transactions valides, un validateur mine périodiquement un bloc, puis une base de données persiste le bloc dans un ledger.
+
+L'objectif du modèle formel n'est pas de recalculer tous les détails numériques de la blockchain. Il sert plutôt à vérifier le \textbf{flux de contrôle critique} : une transaction ne doit pas être supprimée avant confirmation, un bloc miné doit recevoir une réponse de la base de données, un échec de persistance ne doit pas nettoyer la mempool, et le validateur ne doit pas lancer deux persistances concurrentes du même cycle.
+
+La méthode utilisée combine :
+\begin{itemize}
+  \item un \textbf{réseau de Pétri} exécutable dans \code{petri-blockchain-visualizer/index.html} ;
+  \item des \textbf{scénarios témoins} correspondant aux chemins importants du code ;
+  \item des \textbf{invariants structurels} sur les places et les transitions ;
+  \item des propriétés temporelles en \textbf{LTL} évaluées sur les traces et, sous hypothèses bornées, sur l'espace d'états exploré ;
+  \item une comparaison entre le comportement réel Akka et le comportement abstrait du modèle.
+\end{itemize}
+
+La conclusion principale est que le modèle capture correctement les propriétés de sûreté essentielles : \code{RemoveTxs} ne se produit qu'après \code{DB.Success}, \code{DB.Failed} ne nettoie pas la mempool, les transactions invalides sont rejetées, et l'état \code{waitingForDbState} empêche le validateur de lancer un second minage. La principale limite concerne la vivacité globale : elle dépend d'hypothèses de justice et de bornes, car un réseau de Pétri purement non déterministe peut toujours construire des traces artificielles qui retardent indéfiniment une réponse.
+
+\section{Présentation du système réel}
+
+\subsection{Architecture Akka Typed}
+
+Le projet est structuré autour de plusieurs acteurs Akka Typed. Chaque acteur possède un état local et communique uniquement par messages typés. Cette architecture se prête bien à une modélisation par réseau de Pétri, car les messages deviennent naturellement des transitions et les états internes deviennent des places.
+
+\begin{longtable}{L{0.22\linewidth} L{0.32\linewidth} L{0.38\linewidth}}
+\toprule
+\textbf{Acteur / module} & \textbf{Rôle dans le code} & \textbf{Éléments modélisés dans le réseau de Pétri} \\
+\midrule
+\endhead
+\code{RegistryActor} & Maintient une table \code{name -> ActorRef[Wallet.Command]}. Crée des wallets et résout un wallet par son nom. & Places \code{P_REGISTRY_READY}, \code{P_REGISTRY_HAS_WALLET}, \code{P_REGISTRY_NO_WALLET}. Transitions \code{CreateWallet} et \code{GetWalletRef}. \\
+\code{WalletActor} & Gère les clés RSA simplifiées, le solde local, le nonce, la création et la signature des transactions. & Places \code{P_WALLET_IDLE}, \code{P_WALLET_BUSY}, \code{P_WALLET_BALANCE_REQUEST}, \code{P_UNSIGNED_TX}, \code{P_SIGNED_TX_SENT}, \code{P_TX_REJECTED_LOCAL}. \\
+\code{MempoolActor} & Vérifie les signatures, stocke les transactions en attente, trie par fees décroissants, fournit les deux meilleures transactions au validateur. & Places \code{P_MEMPOOL_EMPTY}, \code{P_MEMPOOL_TX_PENDING}, \code{P_MEMPOOL_ADD_REQ}, \code{P_MEMPOOL_BATCH_SENT}, \code{P_MEMPOOL_CLEANUP_REQ}. \\
+\code{ValidatorActor} & Interroge la mempool toutes les 5 secondes, demande le dernier bloc, mine un nouveau bloc, attend la réponse DB, confirme ou rejette les transactions. & Places \code{P_VALIDATOR_IDLE}, \code{P_VALIDATOR_POLLING}, \code{P_VALIDATOR_BATCH}, \code{P_MINING}, \code{P_BLOCK_MINED}, \code{P_VALIDATOR_WAITING_DB}. \\
+\code{DBActor} & Persiste les blocs dans \code{ledger.txt}, maintient \code{lastHash}, \code{currentId} et une vue mémoire des blocs. Calcule aussi les soldes depuis le ledger. & Places \code{P_DB_LEDGER}, \code{P_DB_BALANCE_REQ}, \code{P_DB_LASTBLOCK_REQ}, \code{P_DB_SAVE_IN_PROGRESS}, \code{P_BLOCK_PERSISTED}, \code{P_DB_SAVE_FAILED}. \\
+\bottomrule
+\end{longtable}
+
+\subsection{Flux nominal d'un transfert}
+
+Le chemin nominal d'un transfert confirmé est le suivant :
+
+\begin{enumerate}
+  \item L'API HTTP reçoit une requête \code{POST /api/wallets/:name/transfer}.
+  \item La route demande au \code{RegistryActor} de résoudre le wallet avec \code{GetWalletRef}.
+  \item Si le wallet existe, la route envoie \code{Wallet.CreateTx} au \code{WalletActor}.
+  \item Le wallet demande son solde à la DB, puis construit une \code{UnsignedTransaction} si les fonds sont suffisants.
+  \item Le wallet calcule le hash, signe la transaction, puis envoie \code{Mempool.AddTx}.
+  \item La mempool vérifie la signature ; si elle est valide, elle insère la transaction dans une liste triée par fees.
+  \item Toutes les 5 secondes, le \code{ValidatorActor} reçoit \code{StartMining}, demande \code{GetTxs}, puis mine un bloc si la mempool n'est pas vide.
+  \item Le validateur demande \code{DB.GetLastBlock}, calcule le proof of work, puis envoie \code{DB.SaveBlock}.
+  \item En cas de \code{DB.Success}, le validateur répond \code{true} aux wallets concernés et demande \code{Mempool.RemoveTxs}.
+  \item La mempool supprime les transactions confirmées. Le système revient dans un état stable.
+\end{enumerate}
+
+En notation de transitions du modèle, le scénario principal est :
+
+\begin{lstlisting}
+T_REGISTRY_GET_WALLET_FOUND
+T_WALLET_CREATE_TX_START
+T_WALLET_GET_BALANCE_REQUEST
+T_DB_BALANCE_RESPONSE
+T_WALLET_FUNDS_OK_BUILD_UNSIGNED
+T_WALLET_SIGN_SEND_MEMPOOL
+T_MEMPOOL_ADD_TX
+T_MEMPOOL_VERIFY_OK_ADD_EMPTY
+T_VALIDATOR_START_MINING
+T_MEMPOOL_GET_TXS_NONEMPTY
+T_DB_GET_LAST_BLOCK_REQUEST
+T_DB_GET_LAST_BLOCK_RESPONSE
+T_MINER_START
+T_MINER_PROOF_OF_WORK
+T_DB_SAVE_BLOCK_REQUEST
+T_DB_SAVE_SUCCESS
+T_VALIDATOR_CONFIRM_SAVED
+T_MEMPOOL_REMOVE_CONFIRMED_ALL
+\end{lstlisting}
+
+\subsection{Flux d'échec important : \code{DB.Failed}}
+
+Le comportement en cas d'échec DB est particulièrement important, car il révèle un choix métier du code réel. Dans \code{ValidatorActor}, si \code{DB.SaveBlock} échoue, le validateur exécute \code{SaveFailed} :
+
+\begin{itemize}
+  \item il répond \code{false} aux \code{replyTo} des transactions sélectionnées ;
+  \item il repasse en état normal ;
+  \item il \textbf{ne déclenche pas} \code{Mempool.RemoveTxs}.
+\end{itemize}
+
+La conséquence est que les transactions restent dans la mempool. Formellement, ce n'est pas un deadlock : un prochain tick du validateur peut reprendre les transactions. En revanche, côté API, les utilisateurs ont déjà reçu une réponse négative. Ce point doit être assumé comme une politique de retry implicite, ou corrigé si l'intention est de rejeter définitivement la transaction après un échec DB.
+
+\section{Modèle formel par réseau de Pétri}
+
+\subsection{Définition simplifiée}
+
+Un réseau de Pétri peut être vu comme un graphe biparti composé de :
+\begin{itemize}
+  \item \textbf{places} : elles représentent des états du système ;
+  \item \textbf{transitions} : elles représentent des événements ou des messages ;
+  \item \textbf{jetons} : ils indiquent quels états sont actuellement vrais ;
+  \item \textbf{arcs} : ils indiquent quelles places sont consommées et produites par chaque transition.
+\end{itemize}
+
+Un marquage $M$ associe à chaque place un nombre de jetons. Une transition $t$ est activable si toutes ses places d'entrée possèdent au moins un jeton. Quand $t$ est tirée, elle consomme un jeton dans chaque place d'entrée et produit un jeton dans chaque place de sortie.
+
+Dans ce projet, une transition du réseau correspond généralement à un message ou à une étape importante du code Akka. Par exemple :
+\begin{itemize}
+  \item \code{T_MEMPOOL_ADD_TX} représente la réception de \code{Mempool.AddTx} ;
+  \item \code{T_DB_SAVE_BLOCK_REQUEST} représente l'envoi de \code{DB.SaveBlock} ;
+  \item \code{T_DB_SAVE_SUCCESS} représente la réponse positive \code{DB.Success} ;
+  \item \code{T_VALIDATOR_SAVE_FAILED} représente le traitement de \code{DB.Failed} par le validateur.
+\end{itemize}
+
+\subsection{Niveau d'abstraction}
+
+Le modèle est volontairement une abstraction du code réel. Il représente le contrôle, mais pas tous les calculs métier. Sont abstraits :
+
+\begin{itemize}
+  \item les montants exacts ;
+  \item les fees exacts ;
+  \item le nonce exact ;
+  \item les timestamps ;
+  \item la valeur réelle des hashes ;
+  \item la cryptographie RSA réelle ;
+  \item le nombre exact de transactions dans la mempool.
+\end{itemize}
+
+À la place, le réseau distingue les états logiques importants : \emph{mempool vide}, \emph{mempool non vide}, \emph{signature valide}, \emph{signature invalide}, \emph{fonds suffisants}, \emph{fonds insuffisants}, \emph{DB success}, \emph{DB failed}. Ces choix rendent le modèle plus simple à comprendre tout en gardant les propriétés importantes vérifiables.
+
+\subsection{Places principales}
+
+\begin{longtable}{L{0.32\linewidth} L{0.60\linewidth}}
+\toprule
+\textbf{Place} & \textbf{Interprétation} \\
+\midrule
+\endhead
+\code{P_REGISTRY_READY} & Le registre est disponible pour créer ou résoudre des wallets. \\
+\code{P_REGISTRY_HAS_WALLET} & Le registre contient le wallet demandé. \\
+\code{P_REGISTRY_NO_WALLET} & Le wallet demandé est absent. \\
+\code{P_WALLET_IDLE} & Le wallet n'est pas en train de traiter une transaction. \\
+\code{P_WALLET_BUSY} & Le wallet traite une transaction ; cela correspond à \code{txInProgress = true}. \\
+\code{P_WALLET_BALANCE_REQUEST} & Le wallet attend le résultat de \code{DB.GetBalanceAtDate}. \\
+\code{P_UNSIGNED_TX} & La transaction non signée a été construite. \\
+\code{P_SIGNED_TX_SENT} & La transaction signée a été envoyée à la mempool. \\
+\code{P_MEMPOOL_EMPTY} & La mempool ne contient aucune transaction abstraite. \\
+\code{P_MEMPOOL_TX_PENDING} & La mempool contient au moins une transaction valide. \\
+\code{P_MEMPOOL_BATCH_SENT} & La mempool a envoyé un lot de transactions au validateur sans les supprimer. \\
+\code{P_DB_LASTBLOCK_REQ} & Le validateur attend \code{DB.LastBlockInfo}. \\
+\code{P_MINING} & Le proof of work est en cours. \\
+\code{P_BLOCK_MINED} & Le bloc est miné mais pas encore persisté. \\
+\code{P_DB_SAVE_IN_PROGRESS} & Une écriture \code{DB.SaveBlock} est en attente. \\
+\code{P_VALIDATOR_WAITING_DB} & Le validateur attend la réponse de la DB. Les nouveaux ticks sont ignorés. \\
+\code{P_BLOCK_PERSISTED} & La DB a répondu \code{Success}. \\
+\code{P_DB_SAVE_FAILED} & La DB a répondu \code{Failed}. \\
+\code{P_SIGNATURE_INVALID} & Une transaction a été rejetée par la mempool à cause d'une signature invalide. \\
+\code{P_VALIDATOR_REJECT_TXS} & Le validateur doit répondre négativement aux transactions sélectionnées après un échec DB. \\
+\code{P_MEMPOOL_CLEANUP_REQ} & Une demande de suppression des transactions confirmées a été envoyée. \\
+\bottomrule
+\end{longtable}
+
+\subsection{Transitions principales}
+
+\begin{longtable}{L{0.39\linewidth} L{0.25\linewidth} L{0.28\linewidth}}
+\toprule
+\textbf{Transition} & \textbf{Code représenté} & \textbf{Effet formel} \\
+\midrule
+\endhead
+\code{T_REGISTRY_GET_WALLET_FOUND} & \code{Registry.GetWalletRef} réussi & Produit une référence de wallet. \\
+\code{T_WALLET_CREATE_TX_START} & \code{Wallet.CreateTx} & Passe le wallet en traitement et déclenche une demande de solde. \\
+\code{T_DB_BALANCE_RESPONSE} & \code{DB.GetBalanceAtDate} & Retourne le solde calculé depuis le ledger. \\
+\code{T_WALLET_FUNDS_OK_BUILD_UNSIGNED} & Test \code{currentBalance >= amount + fee} & Construit une transaction non signée. \\
+\code{T_WALLET_FUNDS_INSUFFICIENT} & Fonds insuffisants & Rejette localement la transaction. \\
+\code{T_WALLET_SIGN_SEND_MEMPOOL} & \code{Crypto.sign} puis \code{Mempool.AddTx} & Produit une transaction signée envoyée à la mempool. \\
+\code{T_MEMPOOL_VERIFY_OK_ADD_EMPTY} & Signature valide, mempool vide & Ajoute la transaction et rend la mempool non vide. \\
+\code{T_MEMPOOL_VERIFY_OK_ADD_NONEMPTY} & Signature valide, mempool déjà non vide & Ajoute et trie la transaction, la mempool reste non vide. \\
+\code{T_MEMPOOL_VERIFY_INVALID} & Signature invalide & Rejette la transaction sans modifier la mempool. \\
+\code{T_VALIDATOR_START_MINING} & Tick \code{StartMining} & Le validateur interroge la mempool. \\
+\code{T_MEMPOOL_GET_TXS_NONEMPTY} & \code{GetTxs} avec transactions & Envoie un batch sans retirer les transactions. \\
+\code{T_MEMPOOL_GET_TXS_EMPTY} & \code{GetTxs} vide & Le validateur revient idle, aucun bloc n'est miné. \\
+\code{T_DB_GET_LAST_BLOCK_REQUEST} & \code{DB.GetLastBlock} & Demande le dernier hash et l'id courant. \\
+\code{T_MINER_PROOF_OF_WORK} & \code{Miner.mine} & Produit un bloc miné abstrait. \\
+\code{T_DB_SAVE_BLOCK_REQUEST} & \code{DB.SaveBlock} & Démarre la persistance et place le validateur en attente DB. \\
+\code{T_DB_SAVE_SUCCESS} & Réponse \code{DB.Success} & Le bloc est persisté ; le validateur peut confirmer. \\
+\code{T_DB_SAVE_FAILED} & Réponse \code{DB.Failed} & La DB garde son ancien état ; le validateur peut rejeter. \\
+\code{T_VALIDATOR_CONFIRM_SAVED} & \code{ConfirmSaved} & Répond \code{true} et demande \code{RemoveTxs}. \\
+\code{T_VALIDATOR_SAVE_FAILED} & \code{SaveFailed} & Répond \code{false} sans nettoyer la mempool. \\
+\code{T_MEMPOOL_REMOVE_CONFIRMED_ALL} & \code{RemoveTxs} & Supprime les transactions confirmées, mempool vide. \\
+\code{T_MEMPOOL_REMOVE_CONFIRMED_PARTIAL} & \code{RemoveTxs} partiel & Supprime les confirmées mais conserve un reste. \\
+\code{T_VALIDATOR_TICK_IGNORED} & \code{waitingForDbState: case _ => Behaviors.same} & Ignore un tick pendant l'attente DB. \\
+\bottomrule
+\end{longtable}
+
+\section{Scénarios de vérification}
+
+Le visualiseur contient plusieurs scénarios. Ils servent de traces témoins : chaque scénario rejoue une séquence représentative du code réel.
+
+\begin{longtable}{L{0.36\linewidth} L{0.56\linewidth}}
+\toprule
+\textbf{Scénario} & \textbf{Objectif vérifié} \\
+\midrule
+\endhead
+\code{transfer_success} & Chemin nominal complet : wallet trouvé, transaction créée, ajoutée à la mempool, minée, persistée, puis supprimée. \\
+\code{transfer_success_mempool_nonempty} & Même chemin nominal, mais avec une mempool déjà non vide. Vérifie que l'ajout et le retrait partiel sont possibles. \\
+\code{db_failure_retry_possible} & Échec de \code{DB.SaveBlock}. Vérifie que la transaction est rejetée côté reply mais non supprimée de la mempool. \\
+\code{insufficient_funds} & Refus local du wallet avant signature et avant entrée en mempool. \\
+\code{wallet_not_found} & Refus API lorsque le registre ne trouve pas le wallet. \\
+\code{create_wallet_success} & Création d'un wallet absent. \\
+\code{create_wallet_exists} & Refus de création si le wallet existe déjà. \\
+\code{mempool_empty_tick} & Tick du validateur alors que la mempool est vide : aucun bloc n'est miné. \\
+\code{tick_ignored_waiting_db} & Tick reçu pendant l'attente DB : il est ignoré par \code{waitingForDbState}. \\
+\code{invalid_signature_actor_branch} & Branche signature invalide dans \code{MempoolActor}. \\
+\bottomrule
+\end{longtable}
+
+\section{Vérification des propriétés structurelles}
+
+\subsection{Définition des propriétés structurelles}
+
+Les propriétés structurelles sont des propriétés qui se déduisent de la forme du réseau : les places, les transitions et leurs arcs. Elles ne dépendent pas d'un calcul précis de hash ou de montant. Elles répondent à des questions comme :
+
+\begin{itemize}
+  \item une transition peut-elle être tirée trop tôt ?
+  \item un état d'attente peut-il rester bloqué ?
+  \item deux comportements incompatibles peuvent-ils être actifs en même temps ?
+  \item une transaction peut-elle disparaître sans confirmation ?
+\end{itemize}
+
+\subsection{Absence de deadlock interne}
+
+On distingue un état terminal normal d'un vrai deadlock.
+
+\textbf{État terminal normal.} Le système est stable : par exemple, la mempool est vide et le validateur est idle. Il n'y a rien à faire tant qu'aucune nouvelle requête externe ou aucun tick utile n'arrive.
+
+\textbf{Deadlock interne.} Une place marquée comme \code{pending} contient un jeton, c'est-à-dire qu'une requête interne est en attente, mais aucune transition interne ne peut progresser. C'est le cas problématique recherché.
+
+Formellement, pour un marquage $M$, on considère un deadlock interne si :
+\[
+  \exists p \in P_{pending},\ M(p) > 0
+  \quad \text{et} \quad
+  \nexists t \in T_{interne},\ t \text{ activable dans } M.
+\]
+
+Dans les scénarios représentatifs, aucun deadlock interne n'est attendu :
+\begin{itemize}
+  \item une demande de solde peut progresser par \code{T_DB_BALANCE_RESPONSE} ;
+  \item une demande de dernier bloc peut progresser par \code{T_DB_GET_LAST_BLOCK_RESPONSE} ;
+  \item un bloc miné peut progresser par \code{T_DB_SAVE_BLOCK_REQUEST} ;
+  \item une écriture DB en cours peut progresser soit vers \code{DB.Success}, soit vers \code{DB.Failed} ;
+  \item un nettoyage mempool peut progresser vers un retrait total ou partiel.
+\end{itemize}
+
+La vérification bornée de l'onglet \emph{Analyse} explore automatiquement les marquages atteignables et signale les deadlocks internes. Les bornes par défaut sont : profondeur maximale, nombre maximal d'états, nombre maximal de tokens par place et nombre maximal de tokens total. Cette exploration n'est pas une preuve mathématique infinie, mais elle permet de détecter les blocages réalistes dans le modèle.
+
+\subsection{Non-suppression avant confirmation}
+
+La propriété la plus importante est : \textbf{la mempool ne doit supprimer une transaction qu'après confirmation DB}.
+
+Dans le modèle :
+\begin{itemize}
+  \item \code{T_MEMPOOL_REMOVE_CONFIRMED_ALL} et \code{T_MEMPOOL_REMOVE_CONFIRMED_PARTIAL} nécessitent la place \code{P_MEMPOOL_CLEANUP_REQ} ;
+  \item \code{P_MEMPOOL_CLEANUP_REQ} est produite uniquement par \code{T_VALIDATOR_CONFIRM_SAVED} ;
+  \item \code{T_VALIDATOR_CONFIRM_SAVED} nécessite \code{P_BLOCK_PERSISTED} ;
+  \item \code{P_BLOCK_PERSISTED} est produite uniquement par \code{T_DB_SAVE_SUCCESS}.
+\end{itemize}
+
+Donc toute trace contenant \code{RemoveTxs} doit contenir auparavant \code{DB.Success}. La chaîne causale est :
+
+\[
+\code{DB.Success}
+\Rightarrow
+\code{P_BLOCK_PERSISTED}
+\Rightarrow
+\code{ConfirmSaved}
+\Rightarrow
+\code{P_MEMPOOL_CLEANUP_REQ}
+\Rightarrow
+\code{RemoveTxs}.
+\]
+
+Cette propriété est structurelle : même sans connaître les valeurs des transactions, l'ordre imposé par les arcs empêche le nettoyage prématuré.
+
+\subsection{Conservation de la mempool après \code{DB.Failed}}
+
+En cas d'échec DB, le modèle doit représenter fidèlement le code : les transactions ne sont pas supprimées.
+
+Dans le modèle :
+\begin{itemize}
+  \item \code{T_DB_SAVE_FAILED} produit \code{P_DB_SAVE_FAILED} et \code{P_VALIDATOR_REJECT_TXS} ;
+  \item \code{T_VALIDATOR_SAVE_FAILED} consomme ces places, répond \code{false}, puis remet le validateur idle ;
+  \item aucune de ces transitions ne produit \code{P_MEMPOOL_CLEANUP_REQ} ;
+  \item \code{P_MEMPOOL_TX_PENDING} reste donc marqué.
+\end{itemize}
+
+La propriété vérifiée est donc :
+\[
+\code{DB.Failed} \Rightarrow \text{pas de nettoyage immédiat de la mempool.}
+\]
+
+C'est cohérent avec \code{ValidatorActor.scala}, où la branche \code{SaveFailed} ne contient pas d'appel à \code{mempool ! Mempool.RemoveTxs(...)}.
+
+\subsection{GetTxs est non destructif}
+
+La transition \code{T_MEMPOOL_GET_TXS_NONEMPTY} représente \code{Mempool.GetTxs}. Dans le code, \code{GetTxs} fait :
+
+\begin{lstlisting}
+val (toSend, _) = txs.splitAt(2)
+replyTo ! Mempool.Txs(toSend)
+Behaviors.same
+\end{lstlisting}
+
+La mempool envoie donc les transactions au validateur, mais ne les retire pas. Le modèle respecte cette propriété : la transition consomme \code{P_MEMPOOL_TX_PENDING} et la reproduit en sortie. Ainsi, la mempool reste non vide jusqu'à \code{RemoveTxs}.
+
+Cette propriété est essentielle : si \code{GetTxs} supprimait immédiatement les transactions, un échec DB pourrait perdre les transactions. Le modèle empêche ce comportement.
+
+\subsection{Exclusion entre minage et attente DB}
+
+Le validateur ne doit pas lancer un nouveau cycle de minage pendant qu'il attend la réponse de la DB.
+
+Dans le code réel, après \code{DB.SaveBlock}, le validateur passe dans \code{waitingForDbState}. Dans cet état :
+\begin{itemize}
+  \item \code{ConfirmSaved} est accepté ;
+  \item \code{SaveFailed} est accepté ;
+  \item tous les autres messages, y compris \code{StartMining}, sont ignorés.
+\end{itemize}
+
+Dans le modèle, cela correspond à la place \code{P_VALIDATOR_WAITING_DB}. La transition \code{T_VALIDATOR_START_MINING} nécessite \code{P_VALIDATOR_IDLE}. Or \code{T_DB_SAVE_BLOCK_REQUEST} produit \code{P_VALIDATOR_WAITING_DB} et ne produit pas \code{P_VALIDATOR_IDLE}. Donc \code{StartMining} n'est pas activable tant que la DB n'a pas répondu.
+
+La transition \code{T_VALIDATOR_TICK_IGNORED} modélise explicitement le cas où un tick arrive malgré tout pendant l'attente : il ne change pas l'état du validateur.
+
+\subsection{Validité de l'entrée en mempool}
+
+Une transaction ne doit entrer dans la mempool que si sa signature est valide.
+
+Dans le modèle :
+\begin{itemize}
+  \item \code{T_MEMPOOL_VERIFY_OK_ADD_EMPTY} et \code{T_MEMPOOL_VERIFY_OK_ADD_NONEMPTY} produisent \code{P_MEMPOOL_TX_PENDING} ;
+  \item ces transitions correspondent au cas \code{Crypto.verify = true} ;
+  \item \code{T_MEMPOOL_VERIFY_INVALID} produit \code{P_SIGNATURE_INVALID} et l'événement \code{txRejected}, mais ne produit pas \code{P_MEMPOOL_TX_PENDING}.
+\end{itemize}
+
+La structure du réseau garantit donc qu'une signature invalide ne crée pas une transaction en attente dans la mempool.
+
+\subsection{Refus local en cas de fonds insuffisants}
+
+Si \code{currentBalance < amount + fee}, le wallet doit refuser la transaction avant de la signer. Le modèle représente cette branche avec \code{T_WALLET_FUNDS_INSUFFICIENT}.
+
+Cette transition produit :
+\begin{itemize}
+  \item \code{P_TX_REJECTED_LOCAL} ;
+  \item l'événement \code{insufficientFunds} ;
+  \item l'événement \code{txRejected} ;
+  \item le retour vers \code{P_WALLET_IDLE}.
+\end{itemize}
+
+Elle ne produit ni \code{P_UNSIGNED_TX}, ni \code{P_SIGNED_TX_SENT}, ni \code{P_MEMPOOL_ADD_REQ}. Le réseau garantit donc que les fonds insuffisants arrêtent le flux avant la mempool.
+
+\section{Invariants}
+
+\subsection{Invariants structurels de places}
+
+Un invariant de places, ou P-invariant, exprime qu'une certaine combinaison de jetons reste constante sur tous les marquages atteignables. Dans ce projet, les invariants sont utilisés comme arguments de sûreté.
+
+\subsubsection*{Invariant I1 -- disponibilité de la DB}
+
+La place \code{P_DB_LEDGER} représente la présence de l'état interne de la DB : \code{lastHash}, \code{currentId}, \code{blocks} et le fichier \code{ledger.txt}. Les transitions qui consultent ou modifient la DB consomment ce jeton puis le reproduisent.
+
+On a donc l'invariant :
+\[
+  M(\code{P_DB_LEDGER}) = 1.
+\]
+
+Interprétation : la DB peut changer de contenu, mais elle ne disparaît pas du système. Après \code{DB.Success}, elle revient avec un état mis à jour ; après \code{DB.Failed}, elle revient avec son ancien état.
+
+\subsubsection*{Invariant I2 -- état principal de la mempool}
+
+En dehors des places historiques ou transitoires, la mempool est soit vide, soit non vide :
+\[
+  M(\code{P_MEMPOOL_EMPTY}) + M(\code{P_MEMPOOL_TX_PENDING}) = 1.
+\]
+
+Interprétation : le modèle ne permet pas que la mempool soit simultanément vide et non vide dans son état principal. Les transitions d'ajout, de lecture et de nettoyage conservent cette cohérence.
+
+\subsubsection*{Invariant I3 -- GetTxs ne consomme pas la transaction}
+
+Pour la transition \code{T_MEMPOOL_GET_TXS_NONEMPTY}, la place \code{P_MEMPOOL_TX_PENDING} est à la fois entrée et sortie. Cela donne l'invariant local :
+\[
+  \Delta M(\code{P_MEMPOOL_TX_PENDING}) = 0
+  \quad \text{lors de } \code{GetTxs}.
+\]
+
+Interprétation : le validateur peut sélectionner un lot, mais les transactions restent dans la mempool jusqu'à la confirmation DB.
+
+\subsubsection*{Invariant I4 -- synchronisation SaveBlock / waiting DB}
+
+Après \code{T_DB_SAVE_BLOCK_REQUEST}, deux places sont produites ensemble :
+\begin{itemize}
+  \item \code{P_DB_SAVE_IN_PROGRESS} ;
+  \item \code{P_VALIDATOR_WAITING_DB}.
+\end{itemize}
+
+Les réponses \code{T_DB_SAVE_SUCCESS} et \code{T_DB_SAVE_FAILED} consomment ces deux places ensemble. On obtient donc l'invariant de synchronisation suivant sur les états atteignables du cycle de persistance :
+\[
+  M(\code{P_DB_SAVE_IN_PROGRESS}) = M(\code{P_VALIDATOR_WAITING_DB}).
+\]
+
+Interprétation : si la DB est en train de sauvegarder un bloc, alors le validateur est nécessairement en attente de cette réponse. Réciproquement, si le validateur attend la DB, une sauvegarde est en cours.
+
+\subsubsection*{Invariant I5 -- pas de nettoyage sans demande explicite}
+
+Les transitions de nettoyage de la mempool exigent \code{P_MEMPOOL_CLEANUP_REQ}. Cette place n'est produite que par \code{T_VALIDATOR_CONFIRM_SAVED}. Donc :
+\[
+  \code{mempoolCleaned} \Rightarrow \code{removeRequested} \Rightarrow \code{txAccepted}.
+\]
+
+Interprétation : le nettoyage n'est pas autonome. La mempool ne décide pas seule de supprimer des transactions ; elle attend une demande explicite du validateur après confirmation DB.
+
+\subsection{Invariants métier}
+
+Les invariants métier traduisent les règles attendues de la blockchain simulée.
+
+\begin{longtable}{L{0.28\linewidth} L{0.34\linewidth} L{0.30\linewidth}}
+\toprule
+\textbf{Invariant métier} & \textbf{Justification dans le modèle} & \textbf{Limite} \\
+\midrule
+\endhead
+Une transaction insuffisamment financée n'entre pas en mempool. & La branche \code{T_WALLET_FUNDS_INSUFFICIENT} produit \code{txRejected} et ne produit pas \code{P_SIGNED_TX_SENT}. & Le modèle ne recalcule pas les montants ; il suppose la branche de test fournie par le code. \\
+Une signature invalide est rejetée. & \code{T_MEMPOOL_VERIFY_INVALID} produit \code{signatureInvalid} et \code{txRejected}, sans produire \code{P_MEMPOOL_TX_PENDING}. & Le modèle ne vérifie pas RSA ; il abstrait \code{Crypto.verify}. \\
+Une transaction sélectionnée par le validateur reste en mempool tant que la DB n'a pas confirmé. & \code{GetTxs} est non destructif ; \code{RemoveTxs} nécessite \code{DB.Success}. & La cardinalité exacte de la mempool est abstraite. \\
+Un bloc confirmé correspond à un bloc miné. & \code{T_DB_SAVE_BLOCK_REQUEST} nécessite \code{P_BLOCK_MINED}. & Le hash et le nonce exacts ne sont pas recalculés. \\
+Un échec DB ne nettoie pas la mempool. & La branche \code{DB.Failed} ne produit pas \code{P_MEMPOOL_CLEANUP_REQ}. & Ce choix peut créer un retry implicite après une réponse API négative. \\
+Le validateur ne mine pas deux blocs simultanément dans le même cycle. & \code{waitingForDbState} empêche \code{StartMining} d'être activable comme nouveau cycle utile. & Le modèle suppose la discipline d'acteur Akka : un message traité à la fois par acteur. \\
+\bottomrule
+\end{longtable}
+
+\subsection{Point d'attention sur le solde}
+
+Le réseau de Pétri ne prouve pas directement l'invariant numérique : \emph{un solde ne devient jamais négatif}. Il vérifie plutôt le contrôle associé : si le solde observé est insuffisant, la transaction est rejetée.
+
+Dans le code réel, le \code{WalletActor} décrémente localement \code{initialBalance} dès l'envoi à la mempool, avant confirmation DB :
+
+\begin{lstlisting}
+val newState = state.copy(
+  initialBalance = state.initialBalance - amount - fee,
+  nonce          = state.nonce + 1
+)
+\end{lstlisting}
+
+Cette stratégie permet d'éviter que deux transactions en file utilisent le même solde. En revanche, en cas d'échec DB, il n'y a pas de rollback explicite du solde local. Le modèle signale cette limite comme un écart entre vérification du flux de contrôle et vérification des valeurs métier.
+
+\section{Propriétés LTL}
+
+\subsection{Rappel simple sur LTL}
+
+La LTL, ou \emph{Linear Temporal Logic}, sert à exprimer des propriétés sur des traces d'exécution. Une trace est une suite d'événements observés pendant l'exécution du système.
+
+Les opérateurs utilisés ici sont :
+\begin{itemize}
+  \item $G\varphi$ : \emph{globally}, la propriété $\varphi$ doit être vraie à toutes les étapes ;
+  \item $F\varphi$ : \emph{finally}, la propriété $\varphi$ doit finir par devenir vraie ;
+  \item $X\varphi$ : \emph{next}, la propriété $\varphi$ doit être vraie à l'étape suivante ;
+  \item $\varphi \rightarrow \psi$ : si $\varphi$ est vraie, alors $\psi$ doit l'être selon l'opérateur temporel donné.
+\end{itemize}
+
+Exemple :
+\[
+  G(\atom{txCreated} \rightarrow F(\atom{txAccepted} \lor \atom{txRejected}))
+\]
+
+se lit : \emph{à chaque fois qu'une transaction est créée, elle doit finir par être acceptée ou rejetée}.
+
+\subsection{Propositions atomiques}
+
+Les propositions atomiques sont attachées aux transitions du réseau. Elles ne sont pas des états complets, mais des événements observés.
+
+\begin{longtable}{L{0.28\linewidth} L{0.62\linewidth}}
+\toprule
+\textbf{Proposition atomique} & \textbf{Signification} \\
+\midrule
+\endhead
+\code{txCreated} & Le wallet commence le traitement d'une transaction. \\
+\code{txAccepted} & Le validateur confirme une transaction après \code{DB.Success}. \\
+\code{txRejected} & Une transaction est refusée localement, par la mempool ou après \code{DB.Failed}. \\
+\code{blockMined} & Le proof of work abstrait a produit un bloc. \\
+\code{dbSaved} & La DB a répondu \code{Success}. \\
+\code{dbFailed} & La DB a répondu \code{Failed}. \\
+\code{mempoolCleaned} & La mempool a supprimé des transactions confirmées. \\
+\code{insufficientFunds} & Le wallet a détecté un solde insuffisant. \\
+\code{signatureInvalid} & La mempool a rejeté la signature. \\
+\code{validatorWaitingDb} & Le validateur est passé en attente de réponse DB. \\
+\code{startMining} & Un tick de minage lance une interrogation de la mempool. \\
+\code{tickIgnored} & Un tick reçu pendant \code{waitingForDbState} est ignoré. \\
+\bottomrule
+\end{longtable}
+
+\subsection{Formules vérifiées}
+
+\begin{longtable}{L{0.08\linewidth} L{0.42\linewidth} L{0.42\linewidth}}
+\toprule
+\textbf{Id} & \textbf{Formule LTL} & \textbf{Lecture simple} \\
+\midrule
+\endhead
+L1 & $G(\atom{txCreated} \rightarrow F(\atom{txAccepted} \lor \atom{txRejected}))$ & Toute transaction créée doit finir acceptée ou rejetée. \\
+L2 & $G(\atom{blockMined} \rightarrow F(\atom{dbSaved} \lor \atom{dbFailed}))$ & Tout bloc miné doit recevoir une réponse DB. \\
+L3 & $G(\atom{dbSaved} \rightarrow F(\atom{mempoolCleaned}))$ & Après une persistance réussie, la mempool doit être nettoyée. \\
+L4 & $G(\atom{dbFailed} \rightarrow F(\atom{txRejected}))$ & Après un échec DB, les transactions sélectionnées doivent recevoir un refus. \\
+L5 & $G(\atom{insufficientFunds} \rightarrow F(\atom{txRejected}))$ & Des fonds insuffisants doivent produire un rejet. \\
+L6 & $G(\atom{signatureInvalid} \rightarrow F(\atom{txRejected}))$ & Une signature invalide doit produire un rejet. \\
+L7 & $G(\atom{dbFailed} \rightarrow X(\lnot\atom{mempoolCleaned}))$ & Juste après un échec DB, on ne doit pas nettoyer la mempool. \\
+L8 & $G(\atom{validatorWaitingDb} \rightarrow X(\lnot\atom{startMining} \lor \atom{tickIgnored}))$ & Quand le validateur attend la DB, le prochain tick ne doit pas lancer un nouveau minage utile. \\
+\bottomrule
+\end{longtable}
+
+\subsection{Résultat sur les traces de scénarios}
+
+Sur les scénarios témoins, les formules LTL servent à vérifier que la trace jouée respecte le comportement attendu.
+
+\begin{itemize}
+  \item Sur \code{transfer_success}, L1, L2 et L3 sont satisfaites : la transaction est créée, minée, persistée, confirmée, puis supprimée de la mempool.
+  \item Sur \code{db_failure_retry_possible}, L2, L4 et L7 sont satisfaites : le bloc miné reçoit une réponse DB négative, les transactions reçoivent un refus, et la mempool n'est pas nettoyée immédiatement.
+  \item Sur \code{insufficient_funds}, L5 est satisfaite : l'insuffisance de fonds mène directement à \code{txRejected}.
+  \item Sur \code{invalid_signature_actor_branch}, L6 est satisfaite : la signature invalide mène directement à \code{txRejected}.
+  \item Sur \code{tick_ignored_waiting_db}, L8 est satisfaite : le tick reçu pendant l'attente DB est modélisé par \code{tickIgnored} et ne lance pas un nouveau cycle de minage.
+\end{itemize}
+
+Le panneau LTL du visualiseur évalue les formules sur le préfixe de trace courant. Si le scénario n'est pas encore terminé, une propriété peut apparaître \emph{en attente}. Cela signifie qu'un déclencheur a été observé, mais que la conséquence attendue n'a pas encore été jouée dans le préfixe courant.
+
+\subsection{Résultat sur l'espace d'états borné}
+
+L'onglet \emph{Analyse} explore les marquages atteignables par BFS dans des bornes configurables. Cette vérification est plus forte qu'un scénario unique, mais elle reste bornée.
+
+La configuration prévue pour analyser un cycle transactionnel représentatif est :
+\begin{itemize}
+  \item une requête externe représentative ;
+  \item profondeur maximale bornée ;
+  \item nombre d'états maximal borné ;
+  \item nombre de tokens par place borné ;
+  \item heuristique de fairness évitant les boucles temporelles sans intérêt ;
+  \item mode \emph{1 requête} pour neutraliser la concurrence artificielle de \code{pendingTxs} pendant l'analyse du cycle principal.
+\end{itemize}
+
+Sous ces hypothèses, l'analyse sert à confirmer :
+\begin{itemize}
+  \item absence de deadlock interne dans les marquages explorés ;
+  \item absence de nettoyage de la mempool sans \code{DB.Success} ;
+  \item absence de nettoyage immédiat après \code{DB.Failed} ;
+  \item impossibilité de lancer un minage utile pendant \code{waitingForDbState} ;
+  \item satisfaction des propriétés de vivacité sur les chemins représentatifs.
+\end{itemize}
+
+\subsection{Pourquoi il faut des hypothèses de justice}
+
+Les propriétés L1 à L4 sont des propriétés de vivacité : elles disent qu'une conséquence doit finir par arriver. Or, dans un réseau de Pétri purement non déterministe, si on autorise toutes les transitions à tout moment, on peut construire des traces peu réalistes qui retardent indéfiniment la transition attendue.
+
+Exemple : après \code{txCreated}, une exploration totalement non contrainte peut continuer à tirer des transitions externes indépendantes ou des boucles qui ne font pas avancer la transaction courante. La formule L1 peut alors paraître violée, non pas parce que le code ne sait pas confirmer ou rejeter la transaction, mais parce que la sémantique explorée n'impose pas de justice.
+
+Il faut donc distinguer :
+\begin{itemize}
+  \item \textbf{sûreté} : quelque chose de mauvais ne doit jamais arriver. Exemple : \code{RemoveTxs} avant \code{DB.Success}. Ces propriétés sont très bien capturées structurellement.
+  \item \textbf{vivacité} : quelque chose de bon doit finir par arriver. Exemple : une transaction créée finit acceptée ou rejetée. Ces propriétés nécessitent des hypothèses de progression : la DB finit par répondre, le mineur finit son calcul, le scheduler Akka traite les messages, et l'utilisateur n'injecte pas une infinité d'actions qui empêchent le scénario courant d'avancer.
+\end{itemize}
+
+Cette distinction est normale en vérification formelle. Le rapport considère donc les propriétés de sûreté comme les plus fortes, et les propriétés de vivacité comme valides sous hypothèse de fairness raisonnable du système.
+
+\section{Comparaison entre comportement réel et modèle formel}
+
+\subsection{Correspondance étape par étape}
+
+\begin{longtable}{L{0.34\linewidth} L{0.34\linewidth} L{0.24\linewidth}}
+\toprule
+\textbf{Comportement réel Akka} & \textbf{Transition Petri} & \textbf{Commentaire} \\
+\midrule
+\endhead
+La route HTTP résout le wallet via \code{Registry.GetWalletRef}. & \code{T_REGISTRY_GET_WALLET_FOUND} ou \code{T_REGISTRY_GET_WALLET_NOT_FOUND} & Le modèle garde seulement le résultat : trouvé ou absent. \\
+Le wallet reçoit \code{CreateTx}. & \code{T_WALLET_CREATE_TX_START} & Correspond au passage \code{txInProgress = true}. \\
+Le wallet demande le solde courant. & \code{T_WALLET_GET_BALANCE_REQUEST}, puis \code{T_DB_BALANCE_RESPONSE} & Le calcul du solde dans le ledger est abstrait par une réponse. \\
+Le wallet construit une transaction non signée. & \code{T_WALLET_FUNDS_OK_BUILD_UNSIGNED} & La branche opposée est \code{T_WALLET_FUNDS_INSUFFICIENT}. \\
+Le wallet signe et envoie à la mempool. & \code{T_WALLET_SIGN_SEND_MEMPOOL}, puis \code{T_MEMPOOL_ADD_TX} & Le hash et RSA sont abstraits par des événements. \\
+La mempool vérifie la signature. & \code{T_MEMPOOL_VERIFY_OK_ADD_EMPTY}, \code{T_MEMPOOL_VERIFY_OK_ADD_NONEMPTY} ou \code{T_MEMPOOL_VERIFY_INVALID} & Le modèle distingue signature valide et invalide. \\
+Le timer du validateur déclenche \code{StartMining}. & \code{T_VALIDATOR_START_MINING} & Le délai réel de 5 secondes est abstrait. \\
+La mempool renvoie les transactions sans les supprimer. & \code{T_MEMPOOL_GET_TXS_NONEMPTY} & Propriété essentielle : \code{GetTxs} est non destructif. \\
+Le validateur demande le dernier bloc. & \code{T_DB_GET_LAST_BLOCK_REQUEST}, puis \code{T_DB_GET_LAST_BLOCK_RESPONSE} & Le hash précédent et l'id courant sont abstraits. \\
+Le validateur mine le bloc. & \code{T_MINER_START}, \code{T_MINER_PROOF_OF_WORK} & Le calcul potentiellement long devient une transition. \\
+Le validateur demande la sauvegarde. & \code{T_DB_SAVE_BLOCK_REQUEST} & Le validateur passe dans \code{waitingForDbState}. \\
+La DB répond \code{Success}. & \code{T_DB_SAVE_SUCCESS}, puis \code{T_VALIDATOR_CONFIRM_SAVED} & Les wallets reçoivent \code{true}, puis la mempool est nettoyée. \\
+La DB répond \code{Failed}. & \code{T_DB_SAVE_FAILED}, puis \code{T_VALIDATOR_SAVE_FAILED} & Les wallets reçoivent \code{false}, mais la mempool n'est pas nettoyée. \\
+\bottomrule
+\end{longtable}
+
+\subsection{Ce que le modèle reproduit fidèlement}
+
+Le modèle reproduit fidèlement les éléments suivants :
+\begin{itemize}
+  \item l'ordre des messages principaux entre acteurs ;
+  \item l'attente asynchrone du wallet pour le solde ;
+  \item le fait que \code{GetTxs} ne vide pas la mempool ;
+  \item le fait que \code{RemoveTxs} arrive seulement après \code{DB.Success} ;
+  \item le fait que \code{DB.Failed} ne déclenche pas \code{RemoveTxs} ;
+  \item le blocage volontaire du validateur en \code{waitingForDbState} ;
+  \item les branches de rejet : wallet absent, fonds insuffisants, signature invalide, DB failed.
+\end{itemize}
+
+\subsection{Différences entre le modèle et le code réel}
+
+\begin{longtable}{L{0.26\linewidth} L{0.32\linewidth} L{0.34\linewidth}}
+\toprule
+\textbf{Aspect} & \textbf{Code réel} & \textbf{Modèle Petri} \\
+\midrule
+\endhead
+Temps & Le validateur reçoit un tick toutes les 5 secondes. Le minage peut prendre un temps variable. & Le temps est abstrait : \code{StartMining} et \code{mine()} sont des transitions. \\
+Cryptographie & Le code calcule un hash SHA-256 et une signature RSA simplifiée. & Le modèle garde seulement \code{signatureValid} ou \code{signatureInvalid}. \\
+Mempool & La liste contient un nombre exact de transactions triées par fee. & Le modèle distingue surtout \emph{vide}, \emph{non vide}, et \emph{reste après cleanup}. \\
+Solde & Le wallet combine solde local et solde issu du ledger. & Le modèle ne manipule pas de valeurs numériques. \\
+DB & Le code écrit réellement dans \code{ledger.txt}. & La réussite ou l'échec DB est une branche non déterministe. \\
+Concurrence Akka & Chaque acteur traite ses messages séquentiellement, mais plusieurs acteurs s'exécutent de façon concurrente. & Le réseau représente les interleavings possibles par non-déterminisme. \\
+Réponse API & \code{ask[Boolean]} attend une réponse du wallet/validateur. & La réponse est représentée par \code{txAccepted} ou \code{txRejected}. \\
+\bottomrule
+\end{longtable}
+
+\subsection{Écart métier principal : échec DB et retry implicite}
+
+Le modèle met en évidence un comportement important du code réel : après \code{DB.Failed}, le validateur répond \code{false} aux wallets, mais les transactions restent en mempool. Cela signifie qu'un tick ultérieur peut les reprendre et potentiellement les miner plus tard.
+
+Deux interprétations sont possibles :
+\begin{enumerate}
+  \item \textbf{Retry implicite voulu} : l'échec DB est considéré comme temporaire, donc la transaction reste en attente pour une prochaine tentative. Dans ce cas, il serait plus cohérent de ne pas répondre définitivement \code{false} à l'API, ou d'indiquer une réponse du type \emph{pending/retry}.
+  \item \textbf{Rejet définitif voulu} : l'échec DB annule la tentative. Dans ce cas, il faudrait aussi retirer la transaction de la mempool ou la marquer comme rejetée pour éviter qu'elle soit minée plus tard.
+\end{enumerate}
+
+Le réseau de Pétri ne choisit pas à la place du code ; il rend simplement ce comportement visible. Pour un rapport de vérification, c'est un point intéressant, car il montre que le modèle ne sert pas seulement à valider le système : il aide aussi à repérer les ambiguïtés métier.
+
+\section{Résultats synthétiques}
+
+\begin{longtable}{L{0.32\linewidth} L{0.18\linewidth} L{0.42\linewidth}}
+\toprule
+\textbf{Propriété} & \textbf{Statut} & \textbf{Justification} \\
+\midrule
+\endhead
+Absence de nettoyage avant confirmation DB & \ok & \code{RemoveTxs} nécessite \code{P_MEMPOOL_CLEANUP_REQ}, produit uniquement après \code{DB.Success}. \\
+Conservation de la mempool après \code{DB.Failed} & \ok & La branche \code{SaveFailed} ne produit pas de demande de cleanup. \\
+\code{GetTxs} non destructif & \ok & La place \code{P_MEMPOOL_TX_PENDING} est reproduite après sélection du batch. \\
+Rejet des fonds insuffisants & \ok & La branche \code{T_WALLET_FUNDS_INSUFFICIENT} rejette avant signature et avant mempool. \\
+Rejet des signatures invalides & \ok & La branche \code{T_MEMPOOL_VERIFY_INVALID} ne produit pas de transaction pending. \\
+Pas de nouveau minage utile pendant \code{waitingForDbState} & \ok & \code{StartMining} nécessite \code{P_VALIDATOR_IDLE}; l'attente DB utilise \code{P_VALIDATOR_WAITING_DB}. \\
+Absence de deadlock interne dans les scénarios représentatifs & \ok & Chaque place pending possède une transition de réponse ou de progression dans les chemins modélisés. \\
+Vivacité globale L1--L4 sans hypothèse de fairness & \warn & Une exploration non contrainte peut retarder indéfiniment certaines conséquences ; il faut borner l'analyse et supposer que les réponses DB/minage/scheduler finissent par progresser. \\
+Invariant numérique de solde non négatif & \warn & Le modèle contrôle la branche \emph{fonds insuffisants}, mais ne prouve pas les calculs exacts de solde. \\
+Politique après \code{DB.Failed} & \warn & Le code répond \code{false} mais conserve la transaction en mempool, ce qui crée un retry implicite. \\
+\bottomrule
+\end{longtable}
+
+\section{Limites de la vérification}
+
+Les limites principales sont les suivantes :
+
+\begin{itemize}
+  \item \textbf{Exploration bornée} : l'onglet Analyse limite la profondeur, le nombre d'états et le nombre de tokens. Ce n'est pas une preuve exhaustive sur un système infini.
+  \item \textbf{Abstraction des valeurs} : les montants, fees, hashes, nonces et signatures ne sont pas recalculés dans le modèle.
+  \item \textbf{Cardinalité simplifiée de la mempool} : le modèle distingue surtout vide / non vide / reste, au lieu de compter exactement toutes les transactions.
+  \item \textbf{Fairness nécessaire} : les propriétés de vivacité supposent que les messages utiles finissent par être traités et que la DB finit par répondre.
+  \item \textbf{Sémantique Akka simplifiée} : chaque acteur traite ses messages séquentiellement, mais le modèle ne reproduit pas tous les détails du scheduler Akka.
+  \item \textbf{Réponse API après échec DB} : le modèle révèle un choix métier qui peut être discutable, mais ne le corrige pas automatiquement.
+\end{itemize}
+
+Ces limites ne rendent pas la vérification inutile. Au contraire, elles clarifient précisément ce qui est prouvé par le modèle et ce qui reste hors périmètre.
+
+\section{Conclusion}
+
+Le réseau de Pétri fournit une représentation claire et vérifiable du comportement critique de la blockchain Akka/Scala. Il montre que le système respecte les propriétés de sûreté essentielles : les transactions valides ne sont supprimées qu'après confirmation DB, les échecs DB ne nettoient pas la mempool, les signatures invalides et les fonds insuffisants sont rejetés, et le validateur ne lance pas un nouveau cycle utile pendant l'attente de persistance.
+
+Les invariants structurels expliquent pourquoi ces propriétés tiennent : certains jetons sont conservés, certaines transitions ne peuvent être tirées qu'après des événements précis, et l'état \code{waitingForDbState} synchronise correctement le validateur avec la DB.
+
+La LTL complète cette analyse en exprimant des propriétés temporelles faciles à lire : toute transaction créée doit finir acceptée ou rejetée, tout bloc miné doit recevoir une réponse DB, et une persistance réussie doit mener au nettoyage de la mempool. Ces propriétés sont validées sur les scénarios témoins et sur l'exploration bornée sous hypothèses réalistes de fairness.
+
+Enfin, la comparaison avec le code réel montre que le modèle n'est pas seulement décoratif : il correspond aux messages Akka et met en évidence un point métier important après \code{DB.Failed}. Le projet dispose donc d'une base formelle utile pour expliquer, tester et améliorer le comportement de la blockchain simulée.
+
+\begin{thebibliography}{9}
+
+\bibitem{murata}
+T. Murata, \emph{Petri Nets: Properties, Analysis and Applications}, Proceedings of the IEEE, 1989.
+
+\bibitem{reisig}
+W. Reisig, \emph{Understanding Petri Nets}, Springer, 2013.
+
+\bibitem{baierkatoen}
+C. Baier, J.-P. Katoen, \emph{Principles of Model Checking}, MIT Press, 2008.
+
+\bibitem{lamport}
+L. Lamport, \emph{The Temporal Logic of Actions}, ACM TOPLAS, 1994.
+
+\bibitem{akka}
+Akka Documentation, \emph{Akka Typed Actors}, \url{https://doc.akka.io/}.
+
+\end{thebibliography}
+
+\end{document}
