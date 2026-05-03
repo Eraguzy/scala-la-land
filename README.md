@@ -163,7 +163,7 @@ Every 5 seconds:
        - removes confirmed transactions from Mempool
 ```
 
-Current difficulty: `"caca"` (the block hash must begin with those 4 characters).
+Current difficulty: `"0000"` (the block hash must begin with those 4 characters).
 
 ---
 
