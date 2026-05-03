@@ -1,5 +1,4 @@
 /*
-
 package blockchain
 
 import akka.actor.typed._
@@ -14,9 +13,9 @@ object Main {
     val system = ActorSystem(
       Behaviors.setup[Nothing] { ctx =>
         // Infrastructure
-        val db      = ctx.spawn(DBActor(),            "blockchain-db")
-        val mempool = ctx.spawn(MempoolActor(),       "mempool")
-        ctx.spawn(ValidatorActor(mempool, db),        "validator")
+        val db = ctx.spawn(DBActor(), "blockchain-db")
+        val mempool = ctx.spawn(MempoolActor(), "mempool")
+        ctx.spawn(ValidatorActor(mempool, db), "validator")
 
         // Wallet registry (manages wallets created via the HTTP API)
         val registry = ctx.spawn(RegistryActor(db, mempool), "wallet-registry")
@@ -35,3 +34,4 @@ object Main {
   }
 }
 */
+
