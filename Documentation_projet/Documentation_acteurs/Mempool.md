@@ -1,231 +1,146 @@
 # MempoolActor (`actors/mempool.scala`)
 
-## Acteurs et protocoles de messages
+## Messaging Actors and Protocols
 
 **MempoolActor** (`actors/mempool.scala`)
-- Commandes reçues : `AddTx`, `GetTxs`, `RemoveTxs`, `ViewPending`
-- Supervision : `Behaviors.supervise(...).onFailure[Exception](SupervisorStrategy.restart)`
-- État immuable géré par récursion avec `behavior(txs: List[PendingTx])`
-- Stockage en mémoire uniquement : aucune persistance disque, la mempool est reconstruite à vide après restart
-- Vérifie la signature avant acceptation avec `Crypto.verify(...)`
-- Trie les transactions par frais décroissants avec `.sortBy(...)(Ordering[BigInt].reverse)`
-- Envoie au validateur un lot maximum de 2 transactions avec `splitAt(2)`
-- Sépare clairement la lecture (`GetTxs`, `ViewPending`) et la suppression réelle (`RemoveTxs`)
 
-## Fonction globale de l'acteur
+- Received commands: `AddTx`, `GetTxs`, `RemoveTxs`, `ViewPending`
+- Monitoring: `Behaviors.supervise(...).onFailure[Exception](SupervisorStrategy.restart)`
+- Immutable state managed recursively with `behavior(txs: List[PendingTx])`
+- In-memory storage only: no persistence to disk, the mempool is rebuilt empty after a reboot
+- Signature verification before acceptance with `Crypto.verify(...)`
+- Sorting of transactions by descending fee with `.sortBy(...)(Ordering[BigInt].reverse)`
+- Sending to Validator: a maximum batch of 2 transactions with `splitAt(2)`
 
-Cet acteur représente la **mempool**, donc la file d'attente des transactions pas encore minées. Son rôle est de recevoir les transactions signées, vérifier qu'elles sont valides, les garder en mémoire dans un ordre de priorité, puis les transmettre au validateur quand celui-ci en demande.
+- Clearly distinguishes between reading (`GetTxs`, `ViewPending`) and deleting (`RemoveTxs`)
 
-Le point important, c'est qu'il ne modifie jamais directement une variable interne avec un `var`. À la place, il garde son état dans le paramètre `txs` de la fonction `behavior`, puis recrée un nouveau comportement à chaque changement.
+## Global Actor Function
+
+This actor represents the **mempool**, i.e., the queue of transactions not yet processed. Its role is to receive signed transactions, verify their validity, store them in memory in order of priority, and then forward them to the validator on demand.
+
+Important point: it never directly modifies an internal variable with `var`. Instead, it stores its state in the `txs` parameter of the `behavior` function, and then recreates a new behavior with each modification.
 
 ```scala
 def apply(): Behavior[Mempool.Command] =
-  Behaviors.supervise(behavior(List.empty))
-    .onFailure[Exception](SupervisorStrategy.restart)
+
+Behaviors.supervise(behavior(List.empty))
+
+.onFailure[Exception](SupervisorStrategy.restart)
+
 ```
 
-Ici, au démarrage, l'acteur crée une mempool vide avec `List.empty`. Ensuite, il est supervisé : si une exception se produit, l'acteur redémarre automatiquement, ce qui remet aussi la liste des transactions à zéro.
+Here, at startup, the actor creates an empty mempool with `List.empty`. Then, it is supervised: if an exception occurs, the actor restarts automatically, which also resets the transaction list to zero.
 
-## Gestion de l'état
+## State Management
 
-Le cœur de l'acteur est ici :
+The core of the actor is located here:
 
 ```scala
 private def behavior(txs: List[PendingTx]): Behavior[Mempool.Command] =
-  Behaviors.receive { (ctx, msg) =>
-    msg match {
-      ...
-    }
-  }
+
+Behaviors.receive { (ctx, msg) =>
+
+msg match {
+...
+
+}
+
+}
 ```
 
-Cette fonction représente l'état courant de la mempool. Le paramètre `txs` contient toutes les transactions en attente à cet instant précis.
+This function represents the current state of the mempool. The `txs` parameter contains all pending transactions at that precise moment.
 
-Quand une transaction est ajoutée ou supprimée, l'acteur ne modifie pas la liste actuelle : il calcule une nouvelle liste, puis rappelle `behavior(updatedList)`. C'est exactement ce qui permet d'avoir un état immuable, tout en gardant une logique de stockage.
+When a transaction is added or deleted, the actor does not modify the current list: it calculates a new list and then calls `behavior(updatedList)`. This is precisely what guarantees an immutable state while preserving the storage logic.
 
-## Détail des messages
+## Message Details
 
 ### `AddTx(signedTx, replyTo)`
 
-Ce message sert à ajouter une transaction signée dans la mempool.
+This message adds a signed transaction to the mempool.
 
 ```scala
 case Mempool.AddTx(signedTx, replyTo) =>
-  val isValid = Crypto.verify(signedTx.tx, signedTx.signature, signedTx.tx.from)
+
+val isValid = Crypto.verify(signedTx.tx, signedTx.signature, signedTx.tx.from)
+
 ```
 
-La première étape est la vérification de signature. L'acteur appelle `Crypto.verify(...)` avec :
-- le contenu brut de la transaction `signedTx.tx`
-- la signature `signedTx.signature`
-- la clé publique de l'émetteur `signedTx.tx.from`
+The first step is to verify the signature. The actor calls `Crypto.verify(...)` with:
 
-Si la signature est invalide, la transaction est rejetée immédiatement :
+- the raw transaction data `signedTx.tx`
+
+- the signature `signedTx.signature`
+
+- the issuer's public key `signedTx.tx.from`
+
+If the signature is invalid, the transaction is immediately rejected:
 
 ```scala
 replyTo ! false
 Behaviors.same
 ```
 
-Ici, `replyTo ! false` envoie une réponse négative à l'acteur qui a demandé l'ajout. Ensuite, `Behaviors.same` veut dire qu'on garde exactement le même état, donc la transaction n'entre pas dans la mempool.
+Here, `replyTo ! false` sends a negative response to the actor who requested the addition. Then, `Behaviors.same` means that the initial state is preserved, so the transaction is not added to the mempool.
 
-Si la signature est valide, la transaction est encapsulée dans un `PendingTx`, ajoutée à la liste, puis triée par frais décroissants :
+If the signature is valid, the transaction is encapsulated in a `PendingTx` object, added to the list, and then sorted by descending fees:
 
 ```scala
 val updated = (PendingTx(signedTx, replyTo) :: txs)
-  .sortBy(_.tx.tx.fees)(Ordering[BigInt].reverse)
+
+.sortBy(_.tx.tx.fees)(Ordering[BigInt].reverse)
 ```
 
-Le `::` ajoute l'élément en tête de liste. Ensuite, le tri remet toutes les transactions dans l'ordre des `fees`, de la plus grande à la plus petite. En pratique, ça simule une petite priority queue : les transactions les plus intéressantes pour le minage passent d'abord.
+The `::` places the item at the top of the list. Then, the sorting reorganizes all transactions in descending order of fees. In practice, this simulates a small priority queue: the transactions most valuable for mining are processed first.
 
-Enfin, l'acteur retourne un nouveau comportement avec :
+Finally, the actor returns a new behavior:
 
 ```scala
 behavior(updated)
 ```
 
-Donc ici, le retour n'est pas une valeur métier, mais un **nouvel état d'acteur** contenant la mempool mise à jour.
+Thus, the return value is not a business value, but a **new state of the actor** containing the updated mempool.
 
 ### `GetTxs(replyTo)`
 
-Ce message est utilisé par le validateur pour demander des transactions à miner.
+This message is used by the validator to request transactions to mine.
 
 ```scala
 case Mempool.GetTxs(replyTo) =>
-  val (toSend, _) = txs.splitAt(2)
+
+val (toSend, _) = txs.splitAt(2)
 ```
 
-`splitAt(2)` coupe la liste en deux parties :
-- `toSend` contient les 2 premières transactions
-- le reste est ignoré ici
+`splitAt(2)` splits the list into two parts:
 
-Le point important, c'est que les transactions **ne sont pas supprimées à ce moment-là**. L'acteur fait seulement une lecture partielle de la file d'attente.
+- `toSend` contains the first two transactions
+- the rest is ignored here
 
-Ensuite, il répond au demandeur avec :
+It is important to note that the transactions **are not deleted at this stage**. The actor only performs a partial read of the queue.
+
+Then, it responds to the requester with:
 
 ```scala
 replyTo ! Mempool.Txs(toSend)
 ```
 
-Si la mempool est vide, il envoie quand même une réponse, mais avec une liste vide :
+If the mempool is empty, it still sends a response, but with an empty list:
 
 ```scala
 replyTo ! Mempool.Txs(List.empty)
+
 ```
 
-Donc, dans tous les cas, le validateur reçoit bien un retour. Ça évite d'avoir un acteur qui attend dans le vide sans réponse.
+Therefore, in all cases, the validator receives a response. This prevents an actor from waiting indefinitely without a response.
 
 ### `RemoveTxs(confirmedTxs)`
 
-Ce message sert à nettoyer la mempool après validation et confirmation en base.
+This message is used to clear the mempool after validation and confirmation in the database.
 
-```scala
+``scala
 case Mempool.RemoveTxs(confirmedTxs) =>
-  val remaining = txs.filterNot(t => confirmedTxs.exists(_.txId == t.tx.txId))
+
+val remaining = txs.filterNot(t => confirmedTxs.exists(_.txId == t.tx.txId))
+
 ```
 
-Ici, l'acteur compare les `txId` des transactions confirmées avec celles présentes dans la mempool. Toutes celles qui ont été confirmées sont retirées.
-
-C'est important parce que la suppression ne se fait pas au moment du `GetTxs`. Le système sépare volontairement :
-- la **lecture** des transactions à traiter
-- la **suppression réelle** une fois que le traitement a abouti
-
-Ensuite, l'acteur bascule vers :
-
-```scala
-behavior(remaining)
-```
-
-Donc l'état est mis à jour avec uniquement les transactions encore en attente.
-
-### `ViewPending(replyTo)`
-
-Ce message sert à obtenir une vue lisible des transactions encore présentes dans la mempool.
-
-```scala
-case Mempool.ViewPending(replyTo) =>
-  val infos = txs.map { pt =>
-    Mempool.PendingTxInfo(
-      txId      = pt.tx.txId,
-      from      = pt.tx.tx.from,
-      to        = pt.tx.tx.to,
-      amount    = pt.tx.tx.amount,
-      fee       = pt.tx.tx.fees,
-      timestamp = pt.tx.tx.timestamp
-    )
-  }
-  replyTo ! Mempool.PendingView(infos)
-  Behaviors.same
-```
-
-Ici, l'acteur ne renvoie pas directement les objets `PendingTx` complets. Il fabrique une version plus propre, plus simple à afficher ou à transmettre, avec seulement les informations utiles.
-
-Le `replyTo ! Mempool.PendingView(infos)` envoie donc une vue en lecture seule de l'état actuel. Ensuite, `Behaviors.same` confirme qu'aucune modification n'a été faite sur la mempool.
-
-## Particularités importantes
-
-### 1. Supervision en restart
-
-```scala
-Behaviors.supervise(behavior(List.empty))
-  .onFailure[Exception](SupervisorStrategy.restart)
-```
-
-Le choix de `restart` est important : en cas d'exception, l'acteur redémarre complètement. Comme la mempool n'est pas persistée, toutes les transactions en attente sont perdues, et l'état repart sur une liste vide.
-
-### 2. Pas de variable mutable
-
-L'acteur suit bien la logique Akka Typed : pas de `var`, pas d'objet global modifié, pas d'état partagé. Toute l'évolution de l'état passe par le retour d'un nouveau `Behavior`.
-
-### 3. Priorité par frais
-
-Le tri par `fees` décroissants donne une priorité naturelle aux transactions qui rapportent le plus. Même sans structure dédiée de type `PriorityQueue`, le comportement obtenu est celui d'une file de priorité simple.
-
-### 4. Lecture et suppression séparées
-
-Le `ValidatorActor` peut demander des transactions avec `GetTxs`, mais ça ne les enlève pas tout de suite. Ce choix évite de perdre des transactions si le minage ou l'écriture en base échoue ensuite.
-
-### 5. Réponses explicites avec `replyTo`
-
-Chaque fois qu'un autre acteur attend une réponse, le `MempoolActor` utilise `replyTo ! ...`. C'est le mécanisme classique d'Akka Typed pour répondre explicitement au bon acteur, sans retour de fonction comme dans du code classique.
-
-## Flux global
-
-Voici le fonctionnement global en chaîne :
-
-1. Un acteur envoie `AddTx` avec une transaction signée.
-2. Le `MempoolActor` vérifie la signature.
-3. Si elle est correcte, il ajoute la transaction et retrie la mempool par frais.
-4. Le validateur envoie `GetTxs` pour récupérer jusqu'à 2 transactions.
-5. Les transactions sont envoyées mais restent temporairement dans la mempool.
-6. Une fois confirmées, un acteur envoie `RemoveTxs`.
-7. Le `MempoolActor` nettoie alors sa liste.
-8. À tout moment, `ViewPending` permet de consulter l'état courant sans le modifier.
-
-## Résumé technique compact
-
-```scala
-apply()
-  -> démarre avec List.empty
-  -> active une supervision restart
-
-behavior(txs)
-  -> représente l'état courant
-
-AddTx
-  -> vérifie signature
-  -> ajoute + trie par fees décroissants
-  -> retourne behavior(updated)
-
-GetTxs
-  -> prend les 2 premières transactions
-  -> répond avec Mempool.Txs(...)
-  -> ne supprime rien
-
-RemoveTxs
-  -> retire les tx confirmées par txId
-  -> retourne behavior(remaining)
-
-ViewPending
-  -> transforme les PendingTx en PendingTxInfo
-  -> répond avec PendingView(...)
-  -> ne modifie rien
+Here, the actor compares the values
