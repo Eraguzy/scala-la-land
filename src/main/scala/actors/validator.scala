@@ -8,7 +8,7 @@ import scala.concurrent.duration._
 
 object ValidatorActor {
 
-  val DIFFICULTY = "caca"
+  val DIFFICULTY = "0000"
 
   def apply(
       mempool: ActorRef[Mempool.Command],
