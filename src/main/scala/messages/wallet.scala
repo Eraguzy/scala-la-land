@@ -5,6 +5,9 @@ import akka.actor.typed.ActorRef
 object Wallet {
   sealed trait Command
 
+  // internal signal used when a dependency (DB or mempool) terminates
+  case class DependencyLost(name: String) extends Command
+
   // public entry point — triggers a balance check first, then does the actual work
   case class CreateTx(
       to: String,

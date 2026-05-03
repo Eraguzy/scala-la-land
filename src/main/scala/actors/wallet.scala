@@ -5,6 +5,7 @@ import akka.actor.typed.scaladsl._
 import messages._
 import objects._
 import functions.Crypto
+import scala.concurrent.duration._
 
 object WalletActor {
 
@@ -34,12 +35,29 @@ object WalletActor {
       db: ActorRef[DB.Command]
   ): Behavior[Wallet.Command] = {
     val (n, pubInt, privInt) = Crypto.genWalletInts()
-    behavior(
-      State(n, pubInt, privInt, initialBalance, name, txInProgress = false),
-      mempool,
-      db,
-      pendingTxs = Vector.empty
-    )
+    Behaviors
+      .supervise(
+        Behaviors.setup[Wallet.Command] { ctx =>
+          ctx.watchWith(mempool, Wallet.DependencyLost("mempool"))
+          ctx.watchWith(db, Wallet.DependencyLost("db"))
+          behavior(
+            State(
+              n,
+              pubInt,
+              privInt,
+              initialBalance,
+              name,
+              txInProgress = false
+            ),
+            mempool,
+            db,
+            pendingTxs = Vector.empty
+          )
+        }
+      )
+      .onFailure[Exception](
+        SupervisorStrategy.restartWithBackoff(200.millis, 5.seconds, 0.2)
+      )
   }
 
   private def behavior(
@@ -50,6 +68,11 @@ object WalletActor {
   ): Behavior[Wallet.Command] =
     Behaviors.receive { (ctx, msg) =>
       msg match {
+
+        case Wallet.DependencyLost(name) =>
+          throw new IllegalStateException(
+            s"wallet ${state.name}: dependency '$name' stopped"
+          )
 
         case Wallet.GetBalance(replyTo) =>
           // balance = what we started with + net chain activity
