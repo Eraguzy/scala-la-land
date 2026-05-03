@@ -20,7 +20,7 @@ object HttpServer {
     // Akka HTTP still runs on the classic actor system internally,
     // so we need to convert the typed one before passing it
     implicit val classicSystem: akka.actor.ActorSystem = system.toClassic
-    implicit val ec: ExecutionContext                  = system.executionContext
+    implicit val ec: ExecutionContext = system.executionContext
 
     val routes = new Routes(registry, db, mempool).routes
 
