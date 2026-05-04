@@ -15,7 +15,8 @@ object ValidatorActor {
       mempool: ActorRef[Mempool.Command],
       db: ActorRef[DB.Command]
   ): Behavior[Validator.Command] =
-    Behaviors.setup { ctx =>
+   Behaviors.supervise {
+    Behaviors.setup[Validator.Command] { ctx =>
       Behaviors.withTimers { timers =>
         timers.startTimerWithFixedDelay(Validator.StartMining, 5.seconds)
 
@@ -44,6 +45,7 @@ object ValidatorActor {
         )
       }
     }
+  }.onFailure[Exception](SupervisorStrategy.restart)
 
   private def createFeeTx(
       pendingTx: PendingTx,

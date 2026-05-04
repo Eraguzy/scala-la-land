@@ -8,15 +8,18 @@ import scala.util.{Failure, Success, Using}
 
 object DBActor {
 
-  def apply(): Behavior[DB.Command] = {
+  def apply(): Behavior[DB.Command] = 
+    Behaviors.supervise {
+      Behaviors.setup[DB.Command] { ctx =>
     // start fresh every run — ledger from a previous session would have
     // different public keys so balances would be wrong anyway
     val file = new java.io.File("ledger.txt")
     if (file.exists()) file.delete()
 
-    Behaviors.supervise(behavior("000", 0, List.empty))
-      .onFailure[Exception](SupervisorStrategy.resume)
-  }
+    behavior("000", 0, List.empty)
+    }
+  }.onFailure[Exception](SupervisorStrategy.restart)
+  
 
   // we keep blocks in memory too (not just on disk) so the HTTP API
   // can serve them without having to re-parse the file on every request
